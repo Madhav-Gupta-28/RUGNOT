@@ -97,12 +97,18 @@ git clone <repo>
 cd rugnot
 npm install
 cp .env.example .env
-# Fill in OKX API credentials
+# Fill in OKX API credentials for live mode
 npm run dev
 # Dashboard: http://localhost:5173
 # Agent API: http://localhost:3001
 # Demo mode: npx tsx scripts/demo-loop.ts
 ```
+
+## X Layer Mainnet Mode
+
+Live mode uses X Layer mainnet, chain ID `196`, through the OKX DEX Aggregator. The agent wallet must be funded with OKB for gas and USDT for trading. USDT on X Layer is `0x1E4a5963aBFD975d8c9021ce480b42188849D41d`.
+
+To enable live mode, add `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE`, `OKX_PROJECT_ID`, `AGENT_WALLET_ADDRESS`, `PRIVATE_KEY`, and `RPC_URL` in `.env`. If credentials are missing or invalid, RUGNOT starts in demo-safe mode and the mock demo endpoint still works.
 
 ## Demo Mode
 

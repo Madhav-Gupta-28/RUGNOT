@@ -1,8 +1,14 @@
 import { v4 as uuidv4 } from 'uuid';
 
-import { env } from './config.js';
 import { vetToken } from './guardian.js';
-import { callOkxApi, fetchTokenPrice } from './okx-api.js';
+import {
+  XLAYER_TOKENS,
+  fromBaseUnits,
+  getAggregatorQuote,
+  getTokenDecimals,
+  onchainos,
+  toBaseUnits,
+} from './okx-api.js';
 import { triggerAutoExit } from './auto-exit.js';
 import { refreshPositionMark } from './executor.js';
 import type { StateStore } from './state.js';
@@ -40,26 +46,50 @@ function shouldAutoExit(state: StateStore, alert: ThreatAlert): boolean {
 }
 
 async function fetchLiquidityImpact(tokenAddress: string, amount: number): Promise<number | null> {
-  const quote = await callOkxApi<Record<string, unknown>>(
-    'GET',
-    `/api/v5/dex/swap/quote?chainId=${env.agentChainId}&fromTokenAddress=${tokenAddress}&toTokenAddress=USDT&amount=${Math.max(1, Math.round(amount * 1_000_000))}`,
-  );
+  const decimals = await getTokenDecimals(tokenAddress);
+  const quote = await getAggregatorQuote({
+    fromTokenAddress: tokenAddress,
+    toTokenAddress: XLAYER_TOKENS.USDT,
+    amount: toBaseUnits(Math.max(amount, 1), decimals),
+    slippage: '0.05',
+  });
 
   if (!quote) {
     return null;
   }
 
-  const impact = readNumber(quote.priceImpact, NaN);
+  const impact = readNumber(quote.priceImpactPercent ?? quote.priceImpactPercentage, NaN);
   return Number.isFinite(impact) ? impact : null;
 }
 
 async function fetchSmartMoneyNet(tokenAddress: string): Promise<number> {
-  const flow = await callOkxApi<Record<string, unknown>>(
-    'GET',
-    `/api/v5/dex/signal/smart-money?chainId=${env.agentChainId}&tokenAddress=${tokenAddress}`,
-  );
+  const flow = onchainos(`dex signal --chain xlayer --type smart-money --token-address ${tokenAddress}`);
+  const record = typeof flow === 'object' && flow !== null ? flow as Record<string, unknown> : {};
 
-  return readNumber(flow?.netBuyAmount, 0);
+  return readNumber(record.netBuyAmount ?? record.netFlowUsd ?? record.netBuyUsd, 0);
+}
+
+async function fetchPositionPrice(position: Position): Promise<number | null> {
+  const decimals = await getTokenDecimals(position.tokenAddress);
+  const amount = position.amount > 0 ? position.amount : 1;
+  const quote = await getAggregatorQuote({
+    fromTokenAddress: position.tokenAddress,
+    toTokenAddress: XLAYER_TOKENS.USDT,
+    amount: toBaseUnits(amount, decimals),
+    slippage: '0.05',
+  });
+
+  if (!quote) {
+    return null;
+  }
+
+  const tokenUnitPrice = readNumber(quote.fromToken?.tokenUnitPrice, NaN);
+  if (Number.isFinite(tokenUnitPrice) && tokenUnitPrice > 0) {
+    return tokenUnitPrice;
+  }
+
+  const usdtOut = fromBaseUnits(quote.toTokenAmount, 6);
+  return amount > 0 && usdtOut > 0 ? usdtOut / amount : null;
 }
 
 function buildThreats(position: Position, verdict: Verdict, liquidityImpact: number | null, smartMoneyNet: number): ThreatAlert[] {
@@ -128,7 +158,7 @@ export async function runSentinelCycle(state: StateStore): Promise<ThreatAlert[]
   const alerts: ThreatAlert[] = [];
 
   for (const position of snapshot.positions) {
-    const currentPrice = await fetchTokenPrice(position.tokenAddress) ?? position.currentPrice;
+    const currentPrice = await fetchPositionPrice(position) ?? position.currentPrice;
     const marked = refreshPositionMark(position, currentPrice);
     const verdict = await vetToken(position.tokenAddress);
     state.addVerdict(verdict);

@@ -6,7 +6,7 @@ import express from 'express';
 import { agentConfig, env } from './config.js';
 import { executeOpportunity } from './executor.js';
 import { startMcpServer } from './mcp.js';
-import { fetchWalletBalances } from './okx-api.js';
+import { fetchWalletBalances, getWalletOnchainBalances, verifyOkxCredentials } from './okx-api.js';
 import { createApiRouter, createDemoRouter } from './routes.js';
 import { runScoutCycle } from './scout.js';
 import { runSentinelCycle } from './sentinel.js';
@@ -17,6 +17,8 @@ import { createX402Router } from './x402.js';
 const app = express();
 const server = createServer(app);
 const state = new StateStore(agentConfig, env.agentWalletAddress);
+let liveApiAvailable = false;
+let discoveryEnabled = false;
 
 app.use(cors());
 app.use(express.json());
@@ -30,7 +32,7 @@ app.use(createX402Router(state));
 const wss = attachWebSocketServer(server, state);
 
 async function hydrateWalletState(): Promise<void> {
-  if (!env.okxCredentialsConfigured) {
+  if (!liveApiAvailable) {
     state.setWalletBalance(state.get().walletBalance);
     return;
   }
@@ -44,6 +46,10 @@ async function hydrateWalletState(): Promise<void> {
 }
 
 async function discoveryTick(): Promise<void> {
+  if (!discoveryEnabled) {
+    return;
+  }
+
   await hydrateWalletState();
 
   if (state.get().walletBalance <= 0) {
@@ -66,6 +72,47 @@ async function discoveryTick(): Promise<void> {
   }
 }
 
+async function runStartupValidation(): Promise<void> {
+  console.log(`[RUGNOT] Wallet ${env.agentWalletAddress}`);
+  console.log(`[RUGNOT] X Layer RPC ${env.rpcUrl}`);
+
+  if (!env.okxCredentialsConfigured) {
+    console.warn('[RUGNOT] Demo mode: OKX credentials are not configured. Real API calls and live swaps are disabled.');
+    liveApiAvailable = false;
+    discoveryEnabled = false;
+    return;
+  }
+
+  liveApiAvailable = await verifyOkxCredentials();
+  if (!liveApiAvailable) {
+    console.error('[RUGNOT] OKX API credential validation failed. Starting in demo-safe mode.');
+    discoveryEnabled = false;
+    return;
+  }
+
+  console.log('[RUGNOT] OKX API credentials validated.');
+
+  const balances = await getWalletOnchainBalances(env.agentWalletAddress);
+  state.setWalletBalance(balances.usdt);
+  console.log(`[RUGNOT] OKB Balance: ${balances.okb.toFixed(6)} OKB`);
+  console.log(`[RUGNOT] USDT Balance: ${balances.usdt.toFixed(6)} USDT`);
+
+  if (!env.privateKey) {
+    console.warn('[RUGNOT] PRIVATE_KEY is missing. Live portfolio reads are enabled, but Loop A swap execution is disabled.');
+    discoveryEnabled = false;
+    return;
+  }
+
+  if (balances.okb <= 0 || balances.usdt <= 0) {
+    console.warn('[RUGNOT] Wallet needs both OKB gas and USDT trading balance. Loop A disabled, Loop B remains active.');
+    discoveryEnabled = false;
+    return;
+  }
+
+  console.log('[RUGNOT] Live mode enabled. Discovery and defense loops can use real X Layer data.');
+  discoveryEnabled = true;
+}
+
 async function defenseTick(): Promise<void> {
   if (state.get().positions.length === 0) {
     return;
@@ -75,6 +122,7 @@ async function defenseTick(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  await runStartupValidation();
   await hydrateWalletState();
   state.setRunning(true);
   await startMcpServer(state);
