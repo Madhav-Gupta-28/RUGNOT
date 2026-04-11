@@ -1,0 +1,10 @@
+{
+  "name": "@rugnot/dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "echo \"Dashboard scaffold pending Phase 2\"",
+    "build": "echo \"Dashboard scaffold pending Phase 2\"",
+    "typecheck": "echo \"Dashboard scaffold pending Phase 2\""
+  }
+}

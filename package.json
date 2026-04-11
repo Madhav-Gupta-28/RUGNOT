@@ -1,0 +1,14 @@
+{
+  "name": "rugnot",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @rugnot/agent",
+    "dev:agent": "npm run dev -w @rugnot/agent",
+    "dev:dashboard": "npm run dev -w @rugnot/dashboard",
+    "typecheck": "npm run typecheck -w @rugnot/agent"
+  }
+}
