@@ -7,8 +7,12 @@
   ],
   "scripts": {
     "build": "npm run build -w @rugnot/agent && npm run build -w @rugnot/dashboard",
+    "dev": "concurrently \"npm run dev:agent\" \"npm run dev:dashboard\"",
     "dev:agent": "npm run dev -w @rugnot/agent",
     "dev:dashboard": "npm run dev -w @rugnot/dashboard",
     "typecheck": "npm run typecheck -w @rugnot/agent && npm run typecheck -w @rugnot/dashboard"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }

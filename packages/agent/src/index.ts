@@ -7,7 +7,7 @@ import { agentConfig, env } from './config.js';
 import { executeOpportunity } from './executor.js';
 import { startMcpServer } from './mcp.js';
 import { fetchWalletBalances } from './okx-api.js';
-import { createApiRouter } from './routes.js';
+import { createApiRouter, createDemoRouter } from './routes.js';
 import { runScoutCycle } from './scout.js';
 import { runSentinelCycle } from './sentinel.js';
 import { StateStore } from './state.js';
@@ -24,11 +24,17 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, timestamp: Date.now() });
 });
 app.use(createApiRouter(state));
+app.use(createDemoRouter(state));
 app.use(createX402Router(state));
 
-attachWebSocketServer(server, state);
+const wss = attachWebSocketServer(server, state);
 
 async function hydrateWalletState(): Promise<void> {
+  if (!env.okxCredentialsConfigured) {
+    state.setWalletBalance(state.get().walletBalance);
+    return;
+  }
+
   const wallet = await fetchWalletBalances(env.agentWalletAddress);
   state.setWalletBalance(wallet.walletBalance);
 
@@ -100,7 +106,12 @@ async function start(): Promise<void> {
     clearInterval(scoutTimer);
     clearInterval(sentinelTimer);
     state.setRunning(false);
-    server.close(() => process.exit(0));
+    for (const client of wss.clients) {
+      client.close();
+    }
+    wss.close(() => {
+      server.close(() => process.exit(0));
+    });
   };
 
   process.on('SIGINT', shutdown);

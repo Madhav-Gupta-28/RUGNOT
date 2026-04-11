@@ -19,12 +19,8 @@ for (const envPath of candidateEnvPaths) {
 
 type RiskTolerance = AgentConfig['riskTolerance'];
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+function readEnv(name: string, fallback = ''): string {
+  return process.env[name] || fallback;
 }
 
 function parseNumber(name: string, fallback?: number): number {
@@ -59,6 +55,7 @@ export interface AppEnv {
   port: number;
   enableMcp: boolean;
   mcpTransport: 'stdio' | 'disabled';
+  okxCredentialsConfigured: boolean;
 }
 
 export const agentConfig: AgentConfig = {
@@ -70,13 +67,14 @@ export const agentConfig: AgentConfig = {
 };
 
 export const env: AppEnv = {
-  okxApiKey: requireEnv('OKX_API_KEY'),
-  okxSecretKey: requireEnv('OKX_SECRET_KEY'),
-  okxPassphrase: requireEnv('OKX_PASSPHRASE'),
-  agentWalletAddress: requireEnv('AGENT_WALLET_ADDRESS'),
+  okxApiKey: readEnv('OKX_API_KEY'),
+  okxSecretKey: readEnv('OKX_SECRET_KEY'),
+  okxPassphrase: readEnv('OKX_PASSPHRASE'),
+  agentWalletAddress: readEnv('AGENT_WALLET_ADDRESS', '0x0000000000000000000000000000000000000196'),
   agentChainId: process.env.AGENT_CHAIN_ID || '196',
   x402PricePerCheck: parseNumber('X402_PRICE_PER_CHECK', 0.005),
   port: parseNumber('PORT', 3001),
   enableMcp: (process.env.ENABLE_MCP || 'false').toLowerCase() === 'true',
   mcpTransport: (process.env.MCP_TRANSPORT || 'stdio') === 'stdio' ? 'stdio' : 'disabled',
+  okxCredentialsConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE),
 };
