@@ -5,6 +5,24 @@ import type { AgentState, WsEvent } from '../lib/types';
 
 const REFRESH_EVENTS = new Set<WsEvent['type']>(['verdict', 'trade', 'threat', 'exit']);
 
+function resolveWebSocketUrl(): string {
+  const explicit = import.meta.env.VITE_WS_URL;
+  if (explicit) {
+    return explicit;
+  }
+
+  if (import.meta.env.DEV) {
+    return 'ws://localhost:3001/ws';
+  }
+
+  if (typeof window !== 'undefined' && window.location?.host) {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${protocol}://${window.location.host}/ws`;
+  }
+
+  return 'ws://localhost:3001/ws';
+}
+
 export function useWebSocket() {
   const addEvent = useRugnotStore((store) => store.addEvent);
   const updateState = useRugnotStore((store) => store.updateState);
@@ -20,7 +38,7 @@ export function useWebSocket() {
         return;
       }
 
-      const socket = new WebSocket('ws://localhost:3001/ws');
+      const socket = new WebSocket(resolveWebSocketUrl());
       socketRef.current = socket;
 
       socket.onmessage = (message) => {

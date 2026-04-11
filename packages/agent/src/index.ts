@@ -5,7 +5,7 @@ import express from 'express';
 
 import { agentConfig, env } from './config.js';
 import { executeOpportunity } from './executor.js';
-import { startMcpServer } from './mcp.js';
+import { createMcpHttpRouter, startMcpServer } from './mcp.js';
 import { fetchWalletBalances, getWalletOnchainBalances, verifyOkxCredentials } from './okx-api.js';
 import { createApiRouter, createDemoRouter } from './routes.js';
 import { runScoutCycle } from './scout.js';
@@ -16,18 +16,32 @@ import { createX402Router } from './x402.js';
 
 const app = express();
 const server = createServer(app);
-const state = new StateStore(agentConfig, env.agentWalletAddress);
+const state = new StateStore(agentConfig, env.agentWalletAddress, env.statePersistencePath);
 let liveApiAvailable = false;
 let discoveryEnabled = false;
+let discoveryInFlight = false;
+let defenseInFlight = false;
 
-app.use(cors());
+const allowedOrigins = process.env.DASHBOARD_ORIGIN
+  ?.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: allowedOrigins && allowedOrigins.length > 0 ? allowedOrigins : true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-ADMIN-TOKEN'],
+  exposedHeaders: ['X-PAYMENT-RESPONSE'],
+}));
 app.use(express.json());
 app.get('/health', (_req, res) => {
   res.json({ ok: true, timestamp: Date.now() });
 });
 app.use(createApiRouter(state));
-app.use(createDemoRouter(state));
+if (process.env.ENABLE_DEMO === 'true') {
+  app.use(createDemoRouter(state));
+}
 app.use(createX402Router(state));
+app.use(createMcpHttpRouter(state));
 
 const wss = attachWebSocketServer(server, state);
 
@@ -46,29 +60,34 @@ async function hydrateWalletState(): Promise<void> {
 }
 
 async function discoveryTick(): Promise<void> {
-  if (!discoveryEnabled) {
+  if (!discoveryEnabled || state.get().isPaused || discoveryInFlight) {
     return;
   }
 
-  await hydrateWalletState();
+  discoveryInFlight = true;
+  try {
+    await hydrateWalletState();
 
-  if (state.get().walletBalance <= 0) {
-    console.warn('[SCOUT] Wallet balance is zero. Skipping discovery cycle.');
-    return;
-  }
-
-  const vetted = await runScoutCycle(state);
-  const existingTokenAddresses = new Set(state.get().positions.map((position) => position.tokenAddress));
-
-  for (const opportunity of vetted) {
-    if (existingTokenAddresses.has(opportunity.tokenAddress)) {
-      continue;
+    if (state.get().walletBalance <= 0) {
+      console.warn('[SCOUT] Wallet balance is zero. Skipping discovery cycle.');
+      return;
     }
 
-    const trade = await executeOpportunity(opportunity, state);
-    if (trade?.status === 'confirmed' || trade?.status === 'pending') {
-      break;
+    const vetted = await runScoutCycle(state);
+    const existingTokenAddresses = new Set(state.get().positions.map((position) => position.tokenAddress));
+
+    for (const opportunity of vetted) {
+      if (existingTokenAddresses.has(opportunity.tokenAddress)) {
+        continue;
+      }
+
+      const trade = await executeOpportunity(opportunity, state);
+      if (trade?.status === 'confirmed' || trade?.status === 'pending') {
+        break;
+      }
     }
+  } finally {
+    discoveryInFlight = false;
   }
 }
 
@@ -114,11 +133,16 @@ async function runStartupValidation(): Promise<void> {
 }
 
 async function defenseTick(): Promise<void> {
-  if (state.get().positions.length === 0) {
+  if (state.get().isPaused || defenseInFlight || state.get().positions.length === 0) {
     return;
   }
 
-  await runSentinelCycle(state);
+  defenseInFlight = true;
+  try {
+    await runSentinelCycle(state);
+  } finally {
+    defenseInFlight = false;
+  }
 }
 
 async function start(): Promise<void> {
@@ -128,7 +152,7 @@ async function start(): Promise<void> {
   await startMcpServer(state);
 
   server.listen(env.port, () => {
-    console.log(`SentinelFi agent listening on http://localhost:${env.port}`);
+    console.log(`RUGNOT agent listening on http://localhost:${env.port}`);
   });
 
   void discoveryTick().catch((error) => {
@@ -157,8 +181,10 @@ async function start(): Promise<void> {
     for (const client of wss.clients) {
       client.close();
     }
-    wss.close(() => {
-      server.close(() => process.exit(0));
+    void state.flush().finally(() => {
+      wss.close(() => {
+        server.close(() => process.exit(0));
+      });
     });
   };
 
@@ -167,6 +193,6 @@ async function start(): Promise<void> {
 }
 
 start().catch((error) => {
-  console.error('Failed to start SentinelFi agent:', error);
+  console.error('Failed to start RUGNOT agent:', error);
   process.exit(1);
 });

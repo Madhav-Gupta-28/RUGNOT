@@ -73,6 +73,7 @@ export interface X402Transaction {
 
 export interface AgentState {
   isRunning: boolean;
+  isPaused: boolean;
   walletAddress: string;
   walletBalance: number;
   positions: Position[];

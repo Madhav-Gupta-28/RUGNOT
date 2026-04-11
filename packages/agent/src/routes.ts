@@ -1,33 +1,10 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
+import { env } from './config.js';
+import { buildChatReply } from './llm.js';
 import type { StateStore } from './state.js';
 import type { AgentConfig, EconomicsSnapshot, Position, SecurityCheck, ThreatAlert, TradeExecution, Verdict, VerdictLevel } from './types.js';
-
-function buildChatReply(state: StateStore, message: string): string {
-  const snapshot = state.get();
-  const normalized = message.toLowerCase();
-
-  if (normalized.includes('portfolio')) {
-    return `Portfolio has ${snapshot.positions.length} open positions and wallet balance ${snapshot.walletBalance.toFixed(2)} USDT.`;
-  }
-
-  if (normalized.includes('threat')) {
-    const latestThreat = snapshot.recentThreats[0];
-    return latestThreat
-      ? `Latest threat: ${latestThreat.tokenSymbol} ${latestThreat.threatType} (${latestThreat.severity}).`
-      : 'No threats detected yet.';
-  }
-
-  if (normalized.includes('trade')) {
-    const latestTrade = snapshot.recentTrades[0];
-    return latestTrade
-      ? `Latest trade was a ${latestTrade.type} on ${latestTrade.tokenSymbol} with status ${latestTrade.status}.`
-      : 'No trades executed yet.';
-  }
-
-  return 'SentinelFi is monitoring X Layer and ready to discuss portfolio, threats, or recent trades.';
-}
 
 function sanitizeConfigUpdate(partial: Partial<AgentConfig>): Partial<AgentConfig> {
   const next: Partial<AgentConfig> = {};
@@ -44,6 +21,16 @@ function sanitizeConfigUpdate(partial: Partial<AgentConfig>): Partial<AgentConfi
   }
 
   return next;
+}
+
+function isAdminAuthorized(req: Request): boolean {
+  if (!env.adminToken) {
+    return true;
+  }
+
+  const direct = req.header('x-admin-token');
+  const auth = req.header('authorization');
+  return direct === env.adminToken || auth === `Bearer ${env.adminToken}`;
 }
 
 export function createApiRouter(state: StateStore): Router {
@@ -83,13 +70,31 @@ export function createApiRouter(state: StateStore): Router {
     res.json(economics);
   });
 
-  router.post('/api/chat', (req, res) => {
+  router.post('/api/chat', async (req, res) => {
     const message = typeof req.body?.message === 'string' ? req.body.message : '';
     if (!message) {
       return res.status(400).json({ error: 'message is required' });
     }
 
-    return res.json({ reply: buildChatReply(state, message) });
+    return res.json({ reply: await buildChatReply(state, message) });
+  });
+
+  router.post('/api/pause', (req, res) => {
+    if (!isAdminAuthorized(req)) {
+      return res.status(401).json({ error: 'admin token required' });
+    }
+
+    state.setPaused(true);
+    return res.json({ ok: true, isPaused: true });
+  });
+
+  router.post('/api/resume', (req, res) => {
+    if (!isAdminAuthorized(req)) {
+      return res.status(401).json({ error: 'admin token required' });
+    }
+
+    state.setPaused(false);
+    return res.json({ ok: true, isPaused: false });
   });
 
   router.post('/api/settings', (req, res) => {

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { paymentMiddleware, type Network } from 'x402-express';
 import { v4 as uuidv4 } from 'uuid';
 
 import { env } from './config.js';
@@ -6,24 +7,98 @@ import { vetToken } from './guardian.js';
 import type { StateStore } from './state.js';
 import type { X402Transaction } from './types.js';
 
-function hasPaymentProof(headers: Record<string, string | string[] | undefined>): boolean {
-  const direct = headers['x402-payment'];
-  const alternate = headers['x-payment-proof'];
-  const auth = headers.authorization;
+const SUPPORTED_X402_NETWORKS = new Set<string>([
+  'base',
+  'base-sepolia',
+  'polygon',
+  'polygon-amoy',
+  'avalanche',
+  'avalanche-fuji',
+  'abstract',
+  'abstract-testnet',
+  'iotex',
+  'solana',
+  'solana-devnet',
+  'sei',
+  'sei-testnet',
+  'peaq',
+  'story',
+  'educhain',
+  'skale-base-sepolia',
+]);
 
-  if (typeof direct === 'string' && direct.trim().length > 0) {
-    return true;
+function isEvmAddress(value: string): value is `0x${string}` {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function resolveNetwork(): Network {
+  if (SUPPORTED_X402_NETWORKS.has(env.x402Network)) {
+    return env.x402Network as Network;
   }
-  if (typeof alternate === 'string' && alternate.trim().length > 0) {
-    return true;
-  }
-  return typeof auth === 'string' && auth.toLowerCase().startsWith('x402 ');
+
+  console.warn(`[x402] Unsupported X402_NETWORK=${env.x402Network}; falling back to base.`);
+  return 'base';
+}
+
+function recordSettledPayment(state: StateStore) {
+  return (_req: Request, res: Response, next: NextFunction) => {
+    let recorded = false;
+    res.on('finish', () => {
+      const paymentResponse = res.getHeader('X-PAYMENT-RESPONSE');
+      if (recorded || res.statusCode >= 400 || !paymentResponse) {
+        return;
+      }
+      recorded = true;
+      const payment: X402Transaction = {
+        id: uuidv4(),
+        direction: 'earned',
+        amount: env.x402PricePerCheck,
+        service: `security-check:${env.x402Network}`,
+        timestamp: Date.now(),
+      };
+      state.addX402Transaction(payment);
+    });
+    next();
+  };
 }
 
 export function createX402Router(state: StateStore): Router {
   const router = Router();
+  const payTo = env.x402PayTo || env.agentWalletAddress;
 
-  router.post('/api/v1/security/check', async (req, res) => {
+  if (env.x402Enabled && isEvmAddress(payTo)) {
+    router.use(paymentMiddleware(
+      payTo,
+      {
+        'POST /api/v1/security/check': {
+          price: `$${env.x402PricePerCheck}`,
+          network: resolveNetwork(),
+          config: {
+            description: 'RUGNOT 5-layer X Layer token security verdict',
+            mimeType: 'application/json',
+            maxTimeoutSeconds: 60,
+            outputSchema: {
+              type: 'object',
+              properties: {
+                tokenAddress: { type: 'string' },
+                chain: { type: 'string' },
+                level: { type: 'string' },
+                score: { type: 'number' },
+                checks: { type: 'array' },
+              },
+            },
+          },
+        },
+      },
+      {
+        url: env.x402FacilitatorUrl as `${string}://${string}`,
+      },
+    ));
+  } else if (env.x402Enabled) {
+    console.warn('[x402] Disabled paid security endpoint because X402_PAY_TO is not a valid EVM address.');
+  }
+
+  router.post('/api/v1/security/check', recordSettledPayment(state), async (req, res) => {
     const tokenAddress = typeof req.body?.tokenAddress === 'string' ? req.body.tokenAddress : '';
     const chainId = req.body?.chainId ? String(req.body.chainId) : env.agentChainId;
 
@@ -35,29 +110,8 @@ export function createX402Router(state: StateStore): Router {
       return res.status(400).json({ error: `Unsupported chainId ${chainId}. Expected ${env.agentChainId}.` });
     }
 
-    if (!hasPaymentProof(req.headers)) {
-      return res.status(402).json({
-        error: 'x402_payment_required',
-        service: 'security-check',
-        amount: env.x402PricePerCheck,
-        asset: 'USDT',
-        chainId: env.agentChainId,
-        instructions: 'Provide x402-payment, x-payment-proof, or Authorization: x402 <proof> header.',
-      });
-    }
-
     const verdict = await vetToken(tokenAddress);
     state.addVerdict(verdict);
-
-    const payment: X402Transaction = {
-      id: uuidv4(),
-      direction: 'earned',
-      amount: env.x402PricePerCheck,
-      service: 'security-check',
-      timestamp: Date.now(),
-    };
-
-    state.addX402Transaction(payment);
     return res.json(verdict);
   });
 

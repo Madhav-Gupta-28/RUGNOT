@@ -2,8 +2,10 @@ import {
   DEFAULT_SLIPPAGE,
   XLAYER_TOKENS,
   getAggregatorQuote,
+  getMarketPriceInfo,
+  getSmartMoneyNetFlow,
   getTokenMetadata,
-  onchainos,
+  getTop10HolderPercent,
 } from './okx-api.js';
 import type { SecurityCheck, Verdict, VerdictLevel } from './types.js';
 
@@ -16,20 +18,6 @@ function readBoolean(value: unknown): boolean {
   return value === true || value === 'true' || value === '1' || value === 1;
 }
 
-function coerceRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  if (Array.isArray(record.data) && typeof record.data[0] === 'object' && record.data[0] !== null) {
-    return record.data[0] as Record<string, unknown>;
-  }
-  if (typeof record.result === 'object' && record.result !== null) {
-    return record.result as Record<string, unknown>;
-  }
-  return record;
-}
-
 function unavailable(name: string, reason: string): SecurityCheck {
   return {
     name,
@@ -40,6 +28,8 @@ function unavailable(name: string, reason: string): SecurityCheck {
 }
 
 async function checkTokenRisk(tokenAddress: string): Promise<SecurityCheck> {
+  // Layer 1: OKX Aggregator all-tokens metadata (cheap, one round-trip, and
+  // gives us isHoneyPot + taxRate for any listed token on X Layer).
   try {
     const token = await getTokenMetadata(tokenAddress);
     if (token) {
@@ -59,28 +49,14 @@ async function checkTokenRisk(tokenAddress: string): Promise<SecurityCheck> {
     console.warn('[Guardian] token metadata check failed:', error);
   }
 
-  const cliRisk = coerceRecord(onchainos(`security token-risk --chain xlayer --token-address ${tokenAddress}`));
-  if (cliRisk) {
-    const isHoneyPot = readBoolean(cliRisk.isHoneyPot ?? cliRisk.honeypot);
-    const hasMintFunction = readBoolean(cliRisk.hasMintFunction ?? cliRisk.mintAuthority);
-    return {
-      name: 'Contract Safety',
-      passed: !(isHoneyPot || hasMintFunction),
-      score: isHoneyPot ? 0 : hasMintFunction ? 30 : 82,
-      reason: isHoneyPot
-        ? 'HONEYPOT DETECTED'
-        : hasMintFunction
-          ? 'Has mint authority'
-          : 'Onchain OS token-risk passed',
-      rawData: cliRisk,
-    };
-  }
-
+  // Layer 2: probe the aggregator with a tiny $1 USDT -> token quote. If the
+  // router flags isHoneyPot inline, we catch it here. This also doubles as a
+  // "can I even route through this token" signal.
   const quote = await getAggregatorQuote({
     fromTokenAddress: XLAYER_TOKENS.USDT,
     toTokenAddress: tokenAddress,
-    amount: '1000000',
-    slippage: '0.05',
+    amount: '1000000', // 1 USDT (6 decimals)
+    slippage: '5',
   });
   if (quote?.toToken) {
     const isHoneyPot = readBoolean(quote.toToken.isHoneyPot);
@@ -99,61 +75,81 @@ async function checkTokenRisk(tokenAddress: string): Promise<SecurityCheck> {
 }
 
 async function checkHolders(tokenAddress: string): Promise<SecurityCheck> {
-  const holders = coerceRecord(onchainos(`dex token holders --chain xlayer --token-address ${tokenAddress}`));
-  const topPct = readNumber(
-    holders?.top10Percent ?? holders?.top10HolderPercent ?? holders?.topHolderPercent ?? holders?.concentration,
-    NaN,
-  );
+  // OKX's Market Signal List embeds `top10HolderPercent` on each signal's
+  // token object, so we pull the most recent signal for the token and read
+  // that value. No CLI, no third-party service, pure REST.
+  try {
+    const topPct = await getTop10HolderPercent(tokenAddress);
+    if (topPct === null) {
+      return unavailable('Holder Analysis', 'Holder data unavailable');
+    }
 
-  if (!Number.isFinite(topPct)) {
+    return {
+      name: 'Holder Analysis',
+      passed: topPct < 50,
+      score: Math.max(0, 100 - topPct),
+      reason: `Top 10 holders: ${topPct.toFixed(1)}%`,
+      rawData: { top10HolderPercent: topPct },
+    };
+  } catch (error) {
+    console.warn('[Guardian] holder analysis failed:', error);
     return unavailable('Holder Analysis', 'Holder data unavailable');
   }
-
-  return {
-    name: 'Holder Analysis',
-    passed: topPct < 50,
-    score: Math.max(0, 100 - topPct),
-    reason: `Top 10 holders: ${topPct.toFixed(1)}%`,
-    rawData: holders,
-  };
 }
 
 async function checkSmartMoney(tokenAddress: string): Promise<SecurityCheck> {
-  const flow = coerceRecord(onchainos(`dex signal --chain xlayer --type smart-money --token-address ${tokenAddress}`));
-  const net = readNumber(flow?.netBuyAmount ?? flow?.netFlowUsd ?? flow?.netBuyUsd, NaN);
+  try {
+    const net = await getSmartMoneyNetFlow(tokenAddress);
+    if (net === null) {
+      return unavailable('Smart Money', 'Smart money data unavailable');
+    }
 
-  if (!Number.isFinite(net)) {
+    return {
+      name: 'Smart Money',
+      passed: net >= 0,
+      score: net > 0 ? 80 : net === 0 ? 50 : 20,
+      reason: net > 0 ? `Smart money net-buying $${Math.round(net)}` : net === 0 ? 'Neutral' : `Smart money net-SELLING $${Math.round(Math.abs(net))}`,
+      rawData: { netFlowUsd: net },
+    };
+  } catch (error) {
+    console.warn('[Guardian] smart money check failed:', error);
     return unavailable('Smart Money', 'Smart money data unavailable');
   }
-
-  return {
-    name: 'Smart Money',
-    passed: net >= 0,
-    score: net > 0 ? 80 : net === 0 ? 50 : 20,
-    reason: net > 0 ? 'Smart money buying' : net === 0 ? 'Neutral' : 'Smart money SELLING',
-    rawData: flow,
-  };
 }
 
 async function checkLiquidity(tokenAddress: string): Promise<SecurityCheck> {
-  const quote = await getAggregatorQuote({
-    fromTokenAddress: XLAYER_TOKENS.USDT,
-    toTokenAddress: tokenAddress,
-    amount: '100000000',
-    slippage: DEFAULT_SLIPPAGE,
-  });
+  // Probe the aggregator with a $100 USDT swap. If the market price-info
+  // endpoint also reports a tiny liquidity field, we downgrade the score
+  // further so thin-liquidity meme coins aren't waved through.
+  const [quote, priceInfoArray] = await Promise.all([
+    getAggregatorQuote({
+      fromTokenAddress: XLAYER_TOKENS.USDT,
+      toTokenAddress: tokenAddress,
+      amount: '100000000',
+      slippage: DEFAULT_SLIPPAGE,
+    }),
+    getMarketPriceInfo([tokenAddress]).catch(() => []),
+  ]);
   const impact = readNumber(quote?.priceImpactPercent ?? quote?.priceImpactPercentage, NaN);
 
   if (!quote || !Number.isFinite(impact)) {
     return unavailable('Liquidity', 'Quote unavailable');
   }
 
+  const poolLiquidityUsd = readNumber(priceInfoArray[0]?.liquidity, NaN);
+  const thinLiquidityPenalty = Number.isFinite(poolLiquidityUsd) && poolLiquidityUsd > 0 && poolLiquidityUsd < 25_000
+    ? 40
+    : 0;
+
+  const score = Math.max(0, 100 - impact * 10 - thinLiquidityPenalty);
   return {
     name: 'Liquidity',
-    passed: impact < 5,
-    score: Math.max(0, 100 - impact * 10),
-    reason: `$100 swap impact: ${impact.toFixed(2)}%`,
-    rawData: quote,
+    passed: impact < 5 && (!Number.isFinite(poolLiquidityUsd) || poolLiquidityUsd >= 10_000),
+    score,
+    reason: Number.isFinite(poolLiquidityUsd)
+      ? `$100 swap impact: ${impact.toFixed(2)}%, pool liquidity ~$${Math.round(poolLiquidityUsd).toLocaleString()}`
+      : `$100 swap impact: ${impact.toFixed(2)}%`,
+    rawData: { quote, poolLiquidityUsd },
   };
 }
 
@@ -162,7 +158,7 @@ async function checkSimulation(tokenAddress: string): Promise<SecurityCheck> {
     fromTokenAddress: XLAYER_TOKENS.USDT,
     toTokenAddress: tokenAddress,
     amount: '1000000',
-    slippage: '0.05',
+    slippage: '5',
   });
 
   if (!quote) {
@@ -184,7 +180,27 @@ async function checkSimulation(tokenAddress: string): Promise<SecurityCheck> {
   };
 }
 
-export async function vetToken(tokenAddress: string): Promise<Verdict> {
+function isUnavailable(check: SecurityCheck): boolean {
+  return check.reason.toLowerCase().includes('unavailable') && check.score === 50;
+}
+
+/**
+ * Vet a token against the 5-layer security pipeline. The second argument
+ * toggles between entry-side and exit-side semantics:
+ *
+ *   - `context: 'entry'` (default): if every single check came back
+ *     unavailable, we return a neutral CAUTION verdict so the caller can skip
+ *     the trade safely without false DANGER signals.
+ *
+ *   - `context: 'exit'`: when re-vetting an open position, the same
+ *     all-unavailable situation is DANGEROUS - we have live capital at risk
+ *     and lost all our data sources. In this mode we downgrade to DANGER so
+ *     the Sentinel loop will auto-exit.
+ */
+export async function vetToken(
+  tokenAddress: string,
+  context: 'entry' | 'exit' = 'entry',
+): Promise<Verdict> {
   const start = Date.now();
   const checks = await Promise.all([
     checkTokenRisk(tokenAddress),
@@ -194,12 +210,14 @@ export async function vetToken(tokenAddress: string): Promise<Verdict> {
     checkSimulation(tokenAddress),
   ]);
 
-  if (checks.every((check) => check.score === 50 && check.reason.toLowerCase().includes('unavailable'))) {
+  const allUnavailable = checks.every(isUnavailable);
+  if (allUnavailable) {
+    const level: VerdictLevel = context === 'exit' ? 'DANGER' : 'CAUTION';
     return {
       tokenAddress,
       chain: 'xlayer',
-      level: 'CAUTION',
-      score: 50,
+      level,
+      score: context === 'exit' ? 0 : 50,
       checks,
       timestamp: Date.now(),
       executionTimeMs: Date.now() - start,

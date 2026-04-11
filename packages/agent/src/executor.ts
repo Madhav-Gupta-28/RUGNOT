@@ -11,6 +11,7 @@ import {
   getAggregatorSwapData,
   getApproveTransaction,
   getDexClient,
+  getProvider,
   getSigner,
   getTokenDecimals,
   toBaseUnits,
@@ -23,6 +24,52 @@ interface SwapResult {
   txHash: string;
   status: TradeExecution['status'];
   raw: unknown;
+}
+
+const ERC20_APPROVE_ABI = [
+  'function allowance(address owner, address spender) view returns (uint256)',
+];
+
+// Nonce mutex: both the Scout (Loop A) and Sentinel (Loop B) timers share the
+// same ethers.Wallet. Without a mutex they can race on the same nonce and one
+// of the transactions will revert with "nonce too low". We serialise every
+// write the signer performs with this simple chained-promise mutex.
+let nonceMutex: Promise<void> = Promise.resolve();
+
+async function withNonceMutex<T>(fn: () => Promise<T>): Promise<T> {
+  const prior = nonceMutex;
+  let release: () => void = () => {};
+  nonceMutex = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await prior;
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+// Timeout wrapper for tx.wait() - without this, a stuck transaction can hang
+// the Scout or Sentinel loop for the full default ethers timeout (~hours).
+// On X Layer we expect ~2-4s finality, so 90s is generous.
+const TX_WAIT_TIMEOUT_MS = 90_000;
+
+async function waitForTxWithTimeout(tx: ethers.TransactionResponse): Promise<string | null> {
+  try {
+    const receipt = await Promise.race([
+      tx.wait(1),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), TX_WAIT_TIMEOUT_MS)),
+    ]);
+    if (!receipt) {
+      console.error(`[Executor] Transaction ${tx.hash} not confirmed within ${TX_WAIT_TIMEOUT_MS}ms`);
+      return null;
+    }
+    return receipt.hash ?? tx.hash;
+  } catch (error) {
+    console.error('[Executor] tx.wait failed:', error);
+    return null;
+  }
 }
 
 function readNumber(value: unknown, fallback = 0): number {
@@ -39,7 +86,19 @@ function isNativeToken(tokenAddress: string): boolean {
 }
 
 function getExplorerUrl(txHash: string): string {
-  return `https://www.oklink.com/xlayer/tx/${txHash}`;
+  // OKLink accepts both `/xlayer/tx/` and `/x-layer/tx/`; the latter is the
+  // newer canonical path, so we emit that.
+  return `https://www.oklink.com/x-layer/tx/${txHash}`;
+}
+
+async function getErc20Allowance(tokenAddress: string, owner: string, spender: string): Promise<bigint> {
+  try {
+    const contract = new ethers.Contract(tokenAddress, ERC20_APPROVE_ABI, getProvider());
+    return (await contract.allowance(owner, spender)) as bigint;
+  } catch (error) {
+    console.warn('[Executor] Could not read current ERC20 allowance:', error);
+    return 0n;
+  }
 }
 
 function parseTxValue(value: unknown): bigint {
@@ -85,14 +144,13 @@ async function sendRawTransaction(rawTx: Record<string, unknown>, fallbackTo: st
     return null;
   }
 
-  try {
+  return withNonceMutex(async () => {
     const tx = await signer.sendTransaction(buildTransactionRequest(rawTx, fallbackTo));
-    const receipt = await tx.wait();
-    return receipt?.hash ?? tx.hash;
-  } catch (error) {
+    return await waitForTxWithTimeout(tx);
+  }).catch((error) => {
     console.error('[Executor] Raw transaction failed:', error);
     return null;
-  }
+  });
 }
 
 async function executeSdkSwap(params: {
@@ -118,21 +176,21 @@ async function executeSdkSwap(params: {
     const quoteData = quote.data?.[0];
 
     if (!isNativeToken(params.fromTokenAddress)) {
-      await client.dex.executeApproval({
+      await withNonceMutex(() => client.dex.executeApproval({
         chainIndex: XLAYER_CHAIN_ID,
         tokenContractAddress: params.fromTokenAddress,
         approveAmount: params.amount,
-      });
+      }));
     }
 
-    const swap = await client.dex.executeSwap({
+    const swap = await withNonceMutex(() => client.dex.executeSwap({
       chainIndex: XLAYER_CHAIN_ID,
       fromTokenAddress: params.fromTokenAddress,
       toTokenAddress: params.toTokenAddress,
       amount: params.amount,
       slippagePercent: DEFAULT_SLIPPAGE,
       userWalletAddress: params.walletAddress,
-    });
+    }));
 
     const amountOut = swap.details?.toToken?.amount
       ? readNumber(swap.details.toToken.amount)
@@ -141,7 +199,7 @@ async function executeSdkSwap(params: {
     return {
       amountOut,
       txHash: swap.transactionId,
-      status: swap.success ? 'confirmed' : 'failed',
+      status: swap.transactionId ? 'confirmed' : 'failed',
       raw: { quote, swap },
     };
   } catch (error) {
@@ -174,10 +232,18 @@ async function executeRawRestSwap(params: {
       approveAmount: params.amount,
     });
     const approvalTx = (approval?.tx ?? approval) as Record<string, unknown> | null;
+    const spender = typeof approval?.dexContractAddress === 'string' ? approval.dexContractAddress : '';
+    const currentAllowance = spender
+      ? await getErc20Allowance(params.fromTokenAddress, params.walletAddress, spender)
+      : 0n;
     if (approvalTx?.data || approvalTx?.to) {
-      const approvalHash = await sendRawTransaction(approvalTx, params.fromTokenAddress);
-      if (!approvalHash) {
-        console.warn('[Executor] Approval transaction could not be broadcast.');
+      if (currentAllowance >= BigInt(params.amount)) {
+        console.log('[Executor] Existing ERC20 allowance is sufficient; skipping approval.');
+      } else {
+        const approvalHash = await sendRawTransaction(approvalTx, params.fromTokenAddress);
+        if (!approvalHash) {
+          console.warn('[Executor] Approval transaction could not be broadcast.');
+        }
       }
     }
   }

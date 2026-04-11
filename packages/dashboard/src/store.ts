@@ -5,6 +5,7 @@ import type { AgentState, WsEvent } from './lib/types';
 
 const initialState: AgentState = {
   isRunning: false,
+  isPaused: false,
   walletAddress: '',
   walletBalance: 0,
   positions: [],

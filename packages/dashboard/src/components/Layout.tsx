@@ -7,6 +7,12 @@ import { Sidebar } from './Sidebar';
 export function Layout() {
   const state = useRugnotStore((store) => store.state);
   const error = useRugnotStore((store) => store.error);
+  const statusLabel = state.isPaused ? 'paused' : state.isRunning ? 'running' : 'stopped';
+  const statusTone = state.isPaused
+    ? 'bg-accent-caution'
+    : state.isRunning
+      ? 'animate-pulse bg-accent-safe'
+      : 'bg-secondary';
 
   return (
     <div className="min-h-screen bg-bg terminal-grid">
@@ -21,9 +27,9 @@ export function Layout() {
           </div>
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex items-center gap-2">
-              <span className={`h-2.5 w-2.5 rounded-full ${state.isRunning ? 'animate-pulse bg-accent-safe' : 'bg-secondary'}`} />
+              <span className={`h-2.5 w-2.5 rounded-full ${statusTone}`} />
               <span className="hidden font-sans text-xs text-secondary sm:inline">
-                {state.isRunning ? 'running' : 'stopped'}
+                {statusLabel}
               </span>
             </div>
             <div className="hidden font-mono text-xs text-secondary md:block">

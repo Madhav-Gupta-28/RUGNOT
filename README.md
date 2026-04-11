@@ -2,15 +2,15 @@
 
 **The only DeFi agent that won't get you rugged.**
 
-`X Layer` | `Onchain OS` | `Uniswap AI` | `x402` | `MCP`
+`X Layer` | `OKX DEX Aggregator` | `OKX Market API` | `Claude Tool Use` | `x402` | `MCP`
 
 ## What is RUGNOT?
 
-RUGNOT is an autonomous AI DeFi agent for OKX X Layer. It discovers trading opportunities, vets them, executes swaps through the OKX DEX aggregator, and keeps watching every open position after entry.
+RUGNOT is an autonomous DeFi security agent for OKX X Layer. It discovers live market signals, vets candidate tokens, executes swaps through the OKX DEX Aggregator, and keeps monitoring every open position after entry.
 
-The core idea is simple: no trade happens without security first. Every candidate token passes through a 5-layer Guardian Pipeline covering contract safety, holder concentration, smart money flow, liquidity depth, and transaction simulation before the agent can buy.
+Every action passes through the Guardian Pipeline, a 5-layer risk engine covering contract safety, holder concentration, smart money flow, liquidity depth, and transaction simulation. A hard failure like a honeypot flag or failed simulation immediately downgrades a token to DANGER.
 
-RUGNOT also monitors positions 24/7. If the Sentinel loop detects whale dumping, liquidity pull risk, price crashes, or contract deterioration, the agent can auto-exit before a bad token turns into a full rug. The same security pipeline is exposed as a paid x402 API so other agents can buy safety checks on demand.
+After entry, the Sentinel loop keeps watching the portfolio. If smart money starts dumping, liquidity gets thin, price breaks down, or the Guardian loses observability on a held token, RUGNOT can pause, alert, or auto-exit before the position turns into a rug.
 
 ## Architecture
 
@@ -18,41 +18,30 @@ RUGNOT also monitors positions 24/7. If the Sentinel loop detects whale dumping,
 LOOP A: DISCOVERY (every 60s)          LOOP B: DEFENSE (every 120s)
 
   SCOUT --> GUARDIAN --> EXECUTOR       SENTINEL --> AUTO-EXIT
-  find       vet each      swap via      monitor       emergency
-  signals    candidate     OKX DEX       positions     sell
+  OKX        5 checks      OKX DEX       monitor       emergency
+  signals    per token     swap          positions     sell
 
            SHARED SERVICES
-  +-----------+-----------+-----------+------------+
-  | StateStore| WS Server | x402 API  | MCP Server |
-  | (in-mem)  | dashboard | sell scans| tools      |
-  +-----------+-----------+-----------+------------+
+  +-----------+-----------+-----------+------------+------------+
+  | StateStore| WS Server | x402 API  | MCP Server | Claude Chat|
+  | JSON disk | dashboard | paid scan | stdio/http | tool use   |
+  +-----------+-----------+-----------+------------+------------+
 
            DASHBOARD (React + Vite)
   Chat | Live Feed | Portfolio | Security Log | Economics
 ```
 
-## Onchain OS Skills Used
+## OKX Integrations
 
-| Skill | How RUGNOT uses it |
+| Capability | How RUGNOT uses it |
 |---|---|
-| okx-security | Token risk scanning, honeypot detection, and transaction simulation. |
-| okx-dex-signal | Smart money tracking and whale alerts for entry and exit signals. |
-| okx-dex-token | Holder cluster analysis and insider concentration detection. |
-| okx-dex-market | Price monitoring, candlestick analysis, and anomaly detection. |
-| okx-dex-swap | Trade execution with cross-DEX routing through the OKX aggregator. |
-| okx-dex-trenches | New meme token scanning and developer reputation checks. |
-| okx-wallet-portfolio | Portfolio monitoring and balance tracking across positions. |
-| okx-onchain-gateway | Gas estimation, transaction simulation, broadcast, and order tracking. |
-| okx-agentic-wallet | Wallet authentication, token sending, and transaction history. |
-| okx-audit-log | Activity export and debugging. |
-
-## Uniswap Skills Used
-
-| Skill | How RUGNOT uses it |
-|---|---|
-| swap-integration | Swap planning and quote comparison. |
-| liquidity-planner | Pool health monitoring and LP lock detection. |
-| v4-security-foundations | Smart contract risk assessment for Uniswap v4 hooks. |
+| OKX DEX Aggregator v6 quote | Live tradeability checks, price quotes, price impact, honeypot/tax metadata. |
+| OKX DEX Aggregator v6 swap | Real X Layer swap execution with SDK-first flow and REST fallback. |
+| OKX approval transaction API | ERC-20 approval transaction generation before raw REST swaps. |
+| OKX all-tokens metadata | Token symbol, decimals, price, tax, and honeypot metadata for Guardian checks. |
+| OKX Market price-info | Portfolio mark prices and market/liquidity context. |
+| OKX Market signal list | Smart-money, whale, and KOL signal discovery for Scout. |
+| X Layer RPC | OKB gas balance, USDT wallet balance, ERC-20 reads, signing, and broadcast through ethers. |
 
 ## The Guardian Pipeline
 
@@ -63,32 +52,64 @@ LOOP A: DISCOVERY (every 60s)          LOOP B: DEFENSE (every 120s)
 Verdict: GO (score: 74)
 ```
 
-The five checks combine into a single GO, CAUTION, or DANGER verdict. A hard failure such as a honeypot or blocked sell simulation immediately downgrades the token to DANGER.
+The Guardian returns `GO`, `CAUTION`, or `DANGER`. Entry-side scans skip trades when data is weak. Exit-side scans are stricter: if a held token loses all security visibility, Sentinel treats that as DANGER because live capital is already at risk.
+
+## Claude Chat
+
+The dashboard chat is backed by the Anthropic TypeScript SDK when `ANTHROPIC_API_KEY` is configured. Claude receives three live tools:
+
+- `check_token_safety` - run the 5-layer Guardian Pipeline for a token.
+- `get_portfolio_risks` - re-check every open position.
+- `find_safe_opportunities` - discover OKX market signals and return vetted opportunities.
+
+If the API key is absent, the chat falls back to a local state summary instead of pretending to be AI.
 
 ## x402 Integration
 
-RUGNOT participates in x402 from both sides of the market.
+`POST /api/v1/security/check` is protected with the official `x402-express` middleware. The endpoint sells RUGNOT security verdicts for `$0.005` per check by default.
 
-As a buyer, the agent can pay for premium signal data when it needs stronger discovery inputs. As a seller, it exposes `POST /api/v1/security/check` so external agents can buy security verdicts for $0.005 per check.
+The protected resource analyzes X Layer tokens, while payment settlement uses x402-supported USDC rails. Default config is Base + USDC through the x402 facilitator:
 
-That creates an earn-pay-earn loop: trade profits fund signal costs, signal costs improve trade selection, and security revenue funds more agent activity.
+```env
+X402_ENABLED=true
+X402_NETWORK=base
+X402_PRICE_PER_CHECK=0.005
+X402_PAY_TO=0xYourReceivingAddress
+X402_FACILITATOR_URL=https://x402.org/facilitator
+```
+
+Successful settlements are recorded in the dashboard economics feed as x402 revenue.
 
 ## MCP Integration
 
-RUGNOT exposes three MCP tools:
+RUGNOT exposes the same three tools over MCP:
 
-- `check_token_safety` - run the 5-layer Guardian Pipeline for a token.
-- `get_portfolio_risks` - vet every token in a wallet or current portfolio.
-- `find_safe_opportunities` - return smart money opportunities that passed security checks.
+- `check_token_safety`
+- `get_portfolio_risks`
+- `find_safe_opportunities`
 
-Any Claude Code, Cursor, OpenClaw, or compatible MCP agent can query RUGNOT's security pipeline and use it as a trust layer.
+Local clients can run the stdio server with:
+
+```bash
+npm run mcp -w @rugnot/agent
+```
+
+Hosted clients can use Streamable HTTP at `POST /mcp` when:
+
+```env
+ENABLE_MCP=true
+MCP_TRANSPORT=http
+```
 
 ## Deployment
 
 - Chain: X Layer
-- Chain ID: 196
-- Agent Wallet: [will be filled]
-- x402 Endpoint: [will be filled]
+- Chain ID: `196`
+- RPC: `https://rpc.xlayer.tech`
+- Gas token: OKB
+- Trading token: USDT on X Layer, `0x1E4a5963aBFD975d8c9021ce480b42188849D41d`
+- Explorer: `https://www.oklink.com/x-layer`
+- x402 settlement: Base USDC by default
 
 ## Getting Started
 
@@ -97,7 +118,7 @@ git clone <repo>
 cd rugnot
 npm install
 cp .env.example .env
-# Fill in OKX API credentials for live mode
+# Fill in OKX API credentials, wallet, and ANTHROPIC_API_KEY for live mode
 npm run dev
 # Dashboard: http://localhost:5173
 # Agent API: http://localhost:3001
@@ -106,16 +127,35 @@ npm run dev
 
 ## X Layer Mainnet Mode
 
-Live mode uses X Layer mainnet, chain ID `196`, through the OKX DEX Aggregator. The agent wallet must be funded with OKB for gas and USDT for trading. USDT on X Layer is `0x1E4a5963aBFD975d8c9021ce480b42188849D41d`.
+Live mode uses X Layer mainnet through OKX DEX Aggregator v6. The agent wallet must be funded with OKB for gas and USDT for trading.
 
-To enable live mode, add `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE`, `OKX_PROJECT_ID`, `AGENT_WALLET_ADDRESS`, `PRIVATE_KEY`, and `RPC_URL` in `.env`. If credentials are missing or invalid, RUGNOT starts in demo-safe mode and the mock demo endpoint still works.
+Required live variables:
+
+```env
+OKX_API_KEY=
+OKX_SECRET_KEY=
+OKX_PASSPHRASE=
+OKX_PROJECT_ID=
+AGENT_WALLET_ADDRESS=
+PRIVATE_KEY=
+RPC_URL=https://rpc.xlayer.tech
+```
+
+If OKX credentials are missing or invalid, RUGNOT starts in demo-safe mode. If credentials are valid but the wallet has no OKB or USDT, discovery and live swaps stay disabled while the API, dashboard, chat, x402, MCP, and demo route can still run.
+
+## Safety Controls
+
+- `POST /api/pause` stops discovery and Sentinel exits.
+- `POST /api/resume` resumes automation.
+- Set `ADMIN_TOKEN` to require `x-admin-token` or `Authorization: Bearer <token>` on pause/resume.
+- State persists to `STATE_PERSISTENCE_PATH` so verdicts, positions, threats, trades, and x402 economics survive restarts.
 
 ## Demo Mode
 
 Demo mode keeps the dashboard alive even without OKX credentials or a funded wallet.
 
 ```bash
-npm run dev
+ENABLE_DEMO=true npm run dev
 npx tsx scripts/demo-loop.ts
 ```
 
@@ -127,9 +167,9 @@ The script calls `POST /api/demo/trigger` every 30 seconds. Each trigger generat
 
 ## Ecosystem Positioning
 
-RUGNOT makes X Layer safer for AI agents by turning security into shared infrastructure. Instead of every trading agent rebuilding its own rug detection, they can query RUGNOT through x402 or MCP and get a structured verdict before touching a token.
+RUGNOT makes X Layer safer for AI agents by turning security into shared infrastructure. Instead of every trading agent rebuilding its own rug detection, agents can query RUGNOT through x402 or MCP and receive a structured verdict before touching a token.
 
-This creates a security-as-a-service layer for the X Layer agent economy. More agents can trade, route, and experiment onchain while depending on a common immune system for token risk, liquidity risk, and emergency exits.
+This creates a practical trust layer for the X Layer agent economy: live OKX signals for discovery, Guardian checks before execution, Sentinel monitoring after entry, and paid security checks that other agents can consume.
 
 ## Screenshots
 

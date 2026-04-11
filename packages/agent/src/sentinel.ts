@@ -5,8 +5,8 @@ import {
   XLAYER_TOKENS,
   fromBaseUnits,
   getAggregatorQuote,
+  getSmartMoneyNetFlow,
   getTokenDecimals,
-  onchainos,
   toBaseUnits,
 } from './okx-api.js';
 import { triggerAutoExit } from './auto-exit.js';
@@ -51,7 +51,7 @@ async function fetchLiquidityImpact(tokenAddress: string, amount: number): Promi
     fromTokenAddress: tokenAddress,
     toTokenAddress: XLAYER_TOKENS.USDT,
     amount: toBaseUnits(Math.max(amount, 1), decimals),
-    slippage: '0.05',
+    slippage: '5',
   });
 
   if (!quote) {
@@ -63,10 +63,8 @@ async function fetchLiquidityImpact(tokenAddress: string, amount: number): Promi
 }
 
 async function fetchSmartMoneyNet(tokenAddress: string): Promise<number> {
-  const flow = onchainos(`dex signal --chain xlayer --type smart-money --token-address ${tokenAddress}`);
-  const record = typeof flow === 'object' && flow !== null ? flow as Record<string, unknown> : {};
-
-  return readNumber(record.netBuyAmount ?? record.netFlowUsd ?? record.netBuyUsd, 0);
+  const net = await getSmartMoneyNetFlow(tokenAddress);
+  return net ?? 0;
 }
 
 async function fetchPositionPrice(position: Position): Promise<number | null> {
@@ -76,7 +74,7 @@ async function fetchPositionPrice(position: Position): Promise<number | null> {
     fromTokenAddress: position.tokenAddress,
     toTokenAddress: XLAYER_TOKENS.USDT,
     amount: toBaseUnits(amount, decimals),
-    slippage: '0.05',
+    slippage: '5',
   });
 
   if (!quote) {
@@ -160,7 +158,9 @@ export async function runSentinelCycle(state: StateStore): Promise<ThreatAlert[]
   for (const position of snapshot.positions) {
     const currentPrice = await fetchPositionPrice(position) ?? position.currentPrice;
     const marked = refreshPositionMark(position, currentPrice);
-    const verdict = await vetToken(position.tokenAddress);
+    // Exit-side semantics: if every data source is unavailable, treat it as
+    // DANGER (we have capital at risk and lost visibility), not CAUTION.
+    const verdict = await vetToken(position.tokenAddress, 'exit');
     state.addVerdict(verdict);
 
     const updatedPosition: Position = {

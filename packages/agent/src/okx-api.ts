@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
 
 import { OKXDexClient } from '@okx-dex/okx-dex-sdk';
@@ -11,8 +10,18 @@ import type { Position, TradeOpportunity } from './types.js';
 export const XLAYER_CHAIN_ID = '196';
 export const XLAYER_RPC_FALLBACK = 'https://xlayerrpc.okx.com';
 export const OKX_WEB3_BASE_URL = 'https://web3.okx.com';
-export const OKX_AGGREGATOR_BASE_PATH = '/api/v5/dex/aggregator';
-export const DEFAULT_SLIPPAGE = '0.01';
+
+// OKX DEX API was upgraded from v5 to v6 on 2025-09-25. v6 renamed:
+//   chainId         -> chainIndex
+//   slippage        -> slippagePercent (and changed the scale: "0.5" now means 0.5%,
+//                                        no longer "0.005" for 0.5%)
+// See https://web3.okx.com/build/dev-docs/wallet-api/change-log
+export const OKX_AGGREGATOR_BASE_PATH = '/api/v6/dex/aggregator';
+export const OKX_MARKET_BASE_PATH = '/api/v6/dex/market';
+
+// Slippage expressed as a percentage (not a decimal). "1" = 1%.
+// The SDK's slippagePercent field uses the same scale.
+export const DEFAULT_SLIPPAGE = '1';
 
 export const XLAYER_TOKENS = {
   OKB: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
@@ -86,6 +95,36 @@ function hasLiveCredentials(): boolean {
   return env.okxCredentialsConfigured;
 }
 
+// Simple token-bucket rate limiter so we don't burst past OKX's REST limits.
+// OKX caps public DEX endpoints somewhere in the 5-10 req/s range per API key.
+// 5 requests per second with a burst of 10 is conservative enough to survive
+// all three loops (Scout, Sentinel, x402 /api/v1/security/check) running concurrently.
+const RATE_LIMIT_CAPACITY = 10;
+const RATE_LIMIT_REFILL_PER_SEC = 5;
+let rateLimitTokens = RATE_LIMIT_CAPACITY;
+let rateLimitLastRefill = Date.now();
+
+async function acquireRateLimitToken(): Promise<void> {
+  while (true) {
+    const now = Date.now();
+    const elapsedSeconds = (now - rateLimitLastRefill) / 1000;
+    if (elapsedSeconds > 0) {
+      rateLimitTokens = Math.min(
+        RATE_LIMIT_CAPACITY,
+        rateLimitTokens + elapsedSeconds * RATE_LIMIT_REFILL_PER_SEC,
+      );
+      rateLimitLastRefill = now;
+    }
+    if (rateLimitTokens >= 1) {
+      rateLimitTokens -= 1;
+      return;
+    }
+    const deficit = 1 - rateLimitTokens;
+    const waitMs = Math.ceil((deficit / RATE_LIMIT_REFILL_PER_SEC) * 1000);
+    await sleep(Math.max(50, waitMs));
+  }
+}
+
 function normalizeResult<T>(value: T | T[] | null): T | T[] | null {
   if (Array.isArray(value) && value.length === 1) {
     return value[0] ?? null;
@@ -96,25 +135,6 @@ function normalizeResult<T>(value: T | T[] | null): T | T[] | null {
 function readNumber(value: unknown, fallback = 0): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function readString(value: unknown, fallback = ''): string {
-  return typeof value === 'string' && value.length > 0 ? value : fallback;
-}
-
-function readArray(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null) : [];
-}
-
-function coerceRecords(value: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    return readArray(value);
-  }
-  if (typeof value === 'object' && value !== null) {
-    const record = value as Record<string, unknown>;
-    return readArray(record.data ?? record.items ?? record.list ?? record.results ?? record.holders ?? record.tokens ?? [record]);
-  }
-  return [];
 }
 
 function toQueryString(params: Record<string, string | number | undefined>): string {
@@ -179,16 +199,12 @@ export function getDexClient(): OKXDexClient | null {
   return dexClient;
 }
 
-export function onchainos(command: string): any {
-  try {
-    const out = execSync(`onchainos ${command} --output json 2>/dev/null`, {
-      encoding: 'utf-8',
-      timeout: 15_000,
-    });
-    return JSON.parse(out);
-  } catch {
-    return null;
-  }
+// The `onchainos` CLI used to be the fallback path for holders / smart-money
+// data before we ported everything to the native OKX REST Market API above.
+// We keep this stub so older callers (and `callOkxApi`'s `cliCommand` option)
+// continue to typecheck - it just returns null in all environments.
+export function onchainos(_command: string): any {
+  return null;
 }
 
 export function callOnchainosCli(command: string): any {
@@ -198,7 +214,7 @@ export function callOnchainosCli(command: string): any {
 export async function callOkxRest<T>(
   method: 'GET' | 'POST',
   pathWithQuery: string,
-  body?: object,
+  body?: object | object[],
   retries = 2,
 ): Promise<OkxEnvelope<T> | null> {
   if (!hasLiveCredentials()) {
@@ -210,8 +226,13 @@ export async function callOkxRest<T>(
   const bodyStr = body ? JSON.stringify(body) : '';
 
   for (let attempt = 0; attempt < retries; attempt += 1) {
+    await acquireRateLimitToken();
     try {
       const timestamp = new Date().toISOString();
+      // For GET, OKX signs `timestamp + METHOD + path + queryString`.
+      // For POST, OKX signs `timestamp + METHOD + path + bodyStr` - queryString is
+      // not part of the signature. We still attach queryString to the fetch URL in
+      // case callers want to mix POST + query params (rare).
       const signaturePayload = method === 'GET' ? queryString : bodyStr;
       const response = await fetch(`${OKX_WEB3_BASE_URL}${requestPath}${queryString}`, {
         method,
@@ -238,6 +259,143 @@ export async function callOkxRest<T>(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// OKX DEX Market API (v6) - replaces the onchainos CLI shellouts that used to
+// power signal discovery, holder concentration checks, and smart-money flow.
+// ---------------------------------------------------------------------------
+
+export interface MarketPriceInfo {
+  chainIndex: string;
+  tokenContractAddress: string;
+  time?: string;
+  price?: string;
+  marketCap?: string;
+  priceChange5M?: string;
+  priceChange1H?: string;
+  priceChange4H?: string;
+  priceChange24H?: string;
+  volume5M?: string;
+  volume1H?: string;
+  volume4H?: string;
+  volume24H?: string;
+  circSupply?: string;
+  liquidity?: string;
+  holders?: string;
+}
+
+export interface MarketSignalToken {
+  tokenAddress?: string;
+  tokenContractAddress?: string;
+  symbol?: string;
+  name?: string;
+  logo?: string;
+  marketCapUsd?: string;
+  holders?: string;
+  top10HolderPercent?: string;
+}
+
+export interface MarketSignal {
+  timestamp?: string;
+  chainIndex?: string;
+  token?: MarketSignalToken;
+  price?: string;
+  walletType?: string;
+  triggerWalletCount?: string;
+  triggerWalletAddress?: string;
+  amountUsd?: string;
+  soldRatioPercent?: string;
+  cursor?: string;
+}
+
+export async function getMarketPriceInfo(tokenAddresses: string[]): Promise<MarketPriceInfo[]> {
+  if (tokenAddresses.length === 0) {
+    return [];
+  }
+  const body = tokenAddresses.map((tokenContractAddress) => ({
+    chainIndex: env.agentChainId,
+    tokenContractAddress,
+  }));
+  const response = await callOkxRest<MarketPriceInfo>(
+    'POST',
+    `${OKX_MARKET_BASE_PATH}/price-info`,
+    body,
+  );
+  return response?.data ?? [];
+}
+
+/**
+ * walletType: "1" = Smart Money, "2" = KOL/Influencer, "3" = Whales.
+ * tokenAddress is optional: if omitted, the API returns latest signals across all tokens on the chain.
+ */
+export async function getMarketSignalList(params: {
+  walletType?: string;
+  tokenAddress?: string;
+  minAmountUsd?: string;
+  minLiquidityUsd?: string;
+  limit?: number;
+}): Promise<MarketSignal[]> {
+  const body: Record<string, string> = {
+    chainIndex: env.agentChainId,
+    limit: String(params.limit ?? 50),
+  };
+  if (params.walletType) body.walletType = params.walletType;
+  if (params.tokenAddress) body.tokenAddress = params.tokenAddress;
+  if (params.minAmountUsd) body.minAmountUsd = params.minAmountUsd;
+  if (params.minLiquidityUsd) body.minLiquidityUsd = params.minLiquidityUsd;
+
+  const response = await callOkxRest<MarketSignal>(
+    'POST',
+    `${OKX_MARKET_BASE_PATH}/signal/list`,
+    [body],
+  );
+  return response?.data ?? [];
+}
+
+/**
+ * Convenience wrapper that asks the Market API for the Smart Money net flow on
+ * a specific token over the most recent signals. Returns signed USD - positive
+ * means net buying, negative means net selling, 0 means neutral / no data.
+ */
+export async function getSmartMoneyNetFlow(tokenAddress: string): Promise<number | null> {
+  const signals = await getMarketSignalList({
+    walletType: '1',
+    tokenAddress,
+    limit: 50,
+  });
+  if (signals.length === 0) {
+    return null;
+  }
+  let net = 0;
+  for (const signal of signals) {
+    const amount = Number(signal.amountUsd ?? 0);
+    if (!Number.isFinite(amount)) continue;
+    // `soldRatioPercent` > 0 indicates selling pressure; otherwise treat as buy.
+    const soldRatio = Number(signal.soldRatioPercent ?? 0);
+    if (Number.isFinite(soldRatio) && soldRatio > 50) {
+      net -= amount;
+    } else {
+      net += amount;
+    }
+  }
+  return net;
+}
+
+/**
+ * Convenience wrapper to extract top-10 holder concentration from signal data.
+ * Looks at the most recent signal touching this token and returns the embedded
+ * `top10HolderPercent` field (0..100). Returns null if we can't read it.
+ */
+export async function getTop10HolderPercent(tokenAddress: string): Promise<number | null> {
+  const signals = await getMarketSignalList({
+    tokenAddress,
+    limit: 1,
+  });
+  const first = signals[0];
+  const raw = first?.token?.top10HolderPercent;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
 }
 
 export async function callOkxApi<T>(
@@ -282,7 +440,7 @@ export function fromBaseUnits(amount: string | number | bigint, decimals: number
 export async function getAllTokens(): Promise<TokenInfo[]> {
   const response = await callOkxRest<TokenInfo>(
     'GET',
-    `${OKX_AGGREGATOR_BASE_PATH}/all-tokens${toQueryString({ chainId: env.agentChainId })}`,
+    `${OKX_AGGREGATOR_BASE_PATH}/all-tokens${toQueryString({ chainIndex: env.agentChainId })}`,
   );
 
   return response?.data ?? [];
@@ -323,11 +481,11 @@ export async function getAggregatorQuote(params: {
   const response = await callOkxRest<AggregatorQuote>(
     'GET',
     `${OKX_AGGREGATOR_BASE_PATH}/quote${toQueryString({
-      chainId: env.agentChainId,
+      chainIndex: env.agentChainId,
       fromTokenAddress: params.fromTokenAddress,
       toTokenAddress: params.toTokenAddress,
       amount: params.amount,
-      slippage: params.slippage ?? DEFAULT_SLIPPAGE,
+      slippagePercent: params.slippage ?? DEFAULT_SLIPPAGE,
     })}`,
   );
 
@@ -344,11 +502,11 @@ export async function getAggregatorSwapData(params: {
   const response = await callOkxRest<AggregatorQuote>(
     'GET',
     `${OKX_AGGREGATOR_BASE_PATH}/swap${toQueryString({
-      chainId: env.agentChainId,
+      chainIndex: env.agentChainId,
       fromTokenAddress: params.fromTokenAddress,
       toTokenAddress: params.toTokenAddress,
       amount: params.amount,
-      slippage: params.slippage ?? DEFAULT_SLIPPAGE,
+      slippagePercent: params.slippage ?? DEFAULT_SLIPPAGE,
       userWalletAddress: params.userWalletAddress,
     })}`,
   );
@@ -363,7 +521,7 @@ export async function getApproveTransaction(params: {
   const response = await callOkxRest<Record<string, unknown>>(
     'GET',
     `${OKX_AGGREGATOR_BASE_PATH}/approve-transaction${toQueryString({
-      chainId: env.agentChainId,
+      chainIndex: env.agentChainId,
       tokenContractAddress: params.tokenContractAddress,
       approveAmount: params.approveAmount,
     })}`,
@@ -406,41 +564,35 @@ export async function getWalletOnchainBalances(walletAddress: string): Promise<{
 }
 
 export async function fetchWalletBalances(walletAddress: string): Promise<{ walletBalance: number; positions: Position[] }> {
+  // We used to shell out to the `onchainos wallet portfolio tokens` CLI here,
+  // but that binary isn't available in hosted Node environments (Railway, etc.).
+  // The on-chain USDT balance is the source of truth for trading capital, and
+  // already-open positions are tracked in StateStore, so returning an empty
+  // position list on hydration is both accurate and safe: StateStore.positions
+  // is never overwritten if it already contains entries (see index.ts).
   const balances = await getWalletOnchainBalances(walletAddress);
-  const cliPortfolio = onchainos(`wallet portfolio tokens --address ${walletAddress} --chain xlayer`);
-  const items = coerceRecords(cliPortfolio);
-
-  const positions = items
-    .filter((item) => {
-      const address = readString(item.tokenAddress ?? item.address ?? item.contractAddress);
-      return address && address.toLowerCase() !== XLAYER_TOKENS.USDT.toLowerCase();
-    })
-    .map((item) => {
-      const tokenAddress = readString(item.tokenAddress ?? item.address ?? item.contractAddress);
-      const currentPrice = readNumber(item.priceUsd ?? item.currentPrice ?? item.tokenUnitPrice);
-      return {
-        tokenAddress,
-        tokenSymbol: readString(item.tokenSymbol ?? item.symbol, tokenAddress.slice(0, 6)),
-        amount: readNumber(item.balance ?? item.amount ?? item.tokenAmount),
-        entryPrice: currentPrice,
-        currentPrice,
-        pnlPercent: readNumber(item.pnlPercent),
-        pnlUsd: readNumber(item.pnlUsd),
-        lastSecurityCheck: 0,
-        lastVerdictLevel: 'CAUTION' as const,
-      };
-    });
-
-  return { walletBalance: balances.usdt, positions };
+  return { walletBalance: balances.usdt, positions: [] };
 }
 
 export async function fetchTokenPrice(tokenAddress: string): Promise<number | null> {
+  // Prefer the Market API price-info endpoint - it's cheaper than a quote
+  // and returns a native USD price regardless of current quote liquidity.
+  const marketInfo = await getMarketPriceInfo([tokenAddress]);
+  const first = marketInfo[0];
+  if (first?.price) {
+    const price = readNumber(first.price, NaN);
+    if (Number.isFinite(price) && price > 0) {
+      return price;
+    }
+  }
+
+  // Fallback: ask the aggregator for a live quote and derive the implicit price.
   const decimals = await getTokenDecimals(tokenAddress);
   const quote = await getAggregatorQuote({
     fromTokenAddress: tokenAddress,
     toTokenAddress: XLAYER_TOKENS.USDT,
     amount: toBaseUnits(1, decimals),
-    slippage: '0.05',
+    slippage: '5',
   });
 
   if (quote?.fromToken?.tokenUnitPrice) {
@@ -455,37 +607,70 @@ export async function fetchTokenPrice(tokenAddress: string): Promise<number | nu
     return usdtOut > 0 ? usdtOut : null;
   }
 
-  const cliPrice = onchainos(`dex market price --chain xlayer --token-address ${tokenAddress}`);
-  const price = readNumber(cliPrice?.price ?? cliPrice?.data?.price ?? cliPrice?.result?.price, NaN);
-  return Number.isFinite(price) ? price : null;
+  return null;
 }
 
+/**
+ * Pull the latest signals from OKX's Market API and convert them into the
+ * internal TradeOpportunity shape consumed by the Scout loop. We query
+ * Smart Money, Whale, and KOL signals because they're the three wallet
+ * categories OKX exposes via /signal/list. `signalStrength` is derived from
+ * the USD size of the triggering transaction (clamped 0..100) and biased by
+ * the number of distinct wallets in agreement.
+ */
 export async function fetchSignalFeed(): Promise<TradeOpportunity[]> {
-  const signalConfigs: Array<{ signalType: TradeOpportunity['signalType']; command: string }> = [
-    { signalType: 'smart-money', command: 'dex signal --chain xlayer --type smart-money' },
-    { signalType: 'kol', command: 'dex signal --chain xlayer --type kol' },
-    { signalType: 'volume-spike', command: 'dex signal --chain xlayer --type volume-spike' },
-    { signalType: 'new-launch', command: 'dex trenches new-launches --chain xlayer' },
-  ];
+  const walletTypeToSignalType: Record<string, TradeOpportunity['signalType']> = {
+    '1': 'smart-money',
+    '2': 'kol',
+    '3': 'volume-spike', // map Whale signals onto our existing 'volume-spike' type
+  };
 
   const deduped = new Map<string, TradeOpportunity>();
 
-  for (const config of signalConfigs) {
-    const payload = onchainos(config.command);
-    const items = coerceRecords(payload);
-    for (const item of items) {
-      const tokenAddress = readString(item.tokenAddress ?? item.address ?? item.contractAddress);
+  for (const walletType of ['1', '2', '3'] as const) {
+    const signals = await getMarketSignalList({ walletType, limit: 50 });
+    for (const signal of signals) {
+      const tokenAddress = signal.token?.tokenContractAddress ?? signal.token?.tokenAddress ?? '';
       if (!tokenAddress) {
         continue;
       }
 
+      // Skip USDT / WOKB / base tokens - we trade _into_ those, not _from_.
+      const lowered = tokenAddress.toLowerCase();
+      if (
+        lowered === XLAYER_TOKENS.USDT.toLowerCase() ||
+        lowered === XLAYER_TOKENS.WOKB.toLowerCase() ||
+        lowered === XLAYER_TOKENS.OKB.toLowerCase()
+      ) {
+        continue;
+      }
+
+      const amountUsd = Number(signal.amountUsd ?? 0);
+      const walletCount = Number(signal.triggerWalletCount ?? 1);
+      const soldRatio = Number(signal.soldRatioPercent ?? 0);
+
+      // Ignore sell-side signals - they're not buy opportunities.
+      if (Number.isFinite(soldRatio) && soldRatio > 50) {
+        continue;
+      }
+
+      // Simple score: USD size (log-scaled) plus wallet-count weight, clamped.
+      const sizeScore = Number.isFinite(amountUsd) && amountUsd > 0
+        ? Math.min(80, 40 + Math.log10(Math.max(1, amountUsd)) * 10)
+        : 40;
+      const countBoost = Number.isFinite(walletCount) && walletCount > 1
+        ? Math.min(20, walletCount * 2)
+        : 0;
+      const signalStrength = Math.round(Math.max(0, Math.min(100, sizeScore + countBoost)));
+
       const candidate: TradeOpportunity = {
         tokenAddress,
-        tokenSymbol: readString(item.tokenSymbol ?? item.symbol, tokenAddress.slice(0, 6)),
-        signalType: config.signalType,
-        signalStrength: readNumber(item.signalStrength ?? item.score ?? item.confidence, 50),
-        currentPrice: readNumber(item.currentPrice ?? item.priceUsd ?? item.price, 0),
+        tokenSymbol: signal.token?.symbol ?? tokenAddress.slice(0, 6),
+        signalType: walletTypeToSignalType[walletType],
+        signalStrength,
+        currentPrice: Number(signal.price ?? 0),
       };
+
       const current = deduped.get(tokenAddress);
       if (!current || candidate.signalStrength > current.signalStrength) {
         deduped.set(tokenAddress, candidate);
