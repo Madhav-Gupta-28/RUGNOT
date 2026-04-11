@@ -6,9 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @rugnot/agent",
+    "build": "npm run build -w @rugnot/agent && npm run build -w @rugnot/dashboard",
     "dev:agent": "npm run dev -w @rugnot/agent",
     "dev:dashboard": "npm run dev -w @rugnot/dashboard",
-    "typecheck": "npm run typecheck -w @rugnot/agent"
+    "typecheck": "npm run typecheck -w @rugnot/agent && npm run typecheck -w @rugnot/dashboard"
   }
 }
