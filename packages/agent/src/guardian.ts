@@ -1,3 +1,4 @@
+import { agentConfig } from './config.js';
 import {
   DEFAULT_SLIPPAGE,
   XLAYER_TOKENS,
@@ -5,7 +6,9 @@ import {
   getMarketPriceInfo,
   getSmartMoneyNetFlow,
   getTokenMetadata,
+  getTopHolderPercent,
   getTop10HolderPercent,
+  toBaseUnits,
 } from './okx-api.js';
 import type { SecurityCheck, Verdict, VerdictLevel } from './types.js';
 
@@ -75,21 +78,27 @@ async function checkTokenRisk(tokenAddress: string): Promise<SecurityCheck> {
 }
 
 async function checkHolders(tokenAddress: string): Promise<SecurityCheck> {
-  // OKX's Market Signal List embeds `top10HolderPercent` on each signal's
-  // token object, so we pull the most recent signal for the token and read
-  // that value. No CLI, no third-party service, pure REST.
   try {
-    const topPct = await getTop10HolderPercent(tokenAddress);
+    const [topPct, top1Pct] = await Promise.all([
+      getTop10HolderPercent(tokenAddress),
+      getTopHolderPercent(tokenAddress),
+    ]);
     if (topPct === null) {
       return unavailable('Holder Analysis', 'Holder data unavailable');
     }
 
+    const concentratedWhale = top1Pct !== null && top1Pct >= 35;
+    const score = Math.max(0, 100 - topPct - (concentratedWhale ? 25 : 0));
+    const reason = top1Pct !== null
+      ? `Top holder: ${top1Pct.toFixed(1)}%, top 10 holders: ${topPct.toFixed(1)}%`
+      : `Top 10 holders: ${topPct.toFixed(1)}%`;
+
     return {
       name: 'Holder Analysis',
-      passed: topPct < 50,
-      score: Math.max(0, 100 - topPct),
-      reason: `Top 10 holders: ${topPct.toFixed(1)}%`,
-      rawData: { top10HolderPercent: topPct },
+      passed: topPct < 50 && !concentratedWhale,
+      score,
+      reason,
+      rawData: { top1HolderPercent: top1Pct, top10HolderPercent: topPct },
     };
   } catch (error) {
     console.warn('[Guardian] holder analysis failed:', error);
@@ -118,14 +127,12 @@ async function checkSmartMoney(tokenAddress: string): Promise<SecurityCheck> {
 }
 
 async function checkLiquidity(tokenAddress: string): Promise<SecurityCheck> {
-  // Probe the aggregator with a $100 USDT swap. If the market price-info
-  // endpoint also reports a tiny liquidity field, we downgrade the score
-  // further so thin-liquidity meme coins aren't waved through.
+  const liquidityProbeUsdt = Math.max(1, agentConfig.maxPositionSizeUsdt);
   const [quote, priceInfoArray] = await Promise.all([
     getAggregatorQuote({
       fromTokenAddress: XLAYER_TOKENS.USDT,
       toTokenAddress: tokenAddress,
-      amount: '100000000',
+      amount: toBaseUnits(liquidityProbeUsdt, 6),
       slippage: DEFAULT_SLIPPAGE,
     }),
     getMarketPriceInfo([tokenAddress]).catch(() => []),
@@ -147,8 +154,8 @@ async function checkLiquidity(tokenAddress: string): Promise<SecurityCheck> {
     passed: impact < 5 && (!Number.isFinite(poolLiquidityUsd) || poolLiquidityUsd >= 10_000),
     score,
     reason: Number.isFinite(poolLiquidityUsd)
-      ? `$100 swap impact: ${impact.toFixed(2)}%, pool liquidity ~$${Math.round(poolLiquidityUsd).toLocaleString()}`
-      : `$100 swap impact: ${impact.toFixed(2)}%`,
+      ? `$${liquidityProbeUsdt.toFixed(0)} swap impact: ${impact.toFixed(2)}%, pool liquidity ~$${Math.round(poolLiquidityUsd).toLocaleString()}`
+      : `$${liquidityProbeUsdt.toFixed(0)} swap impact: ${impact.toFixed(2)}%`,
     rawData: { quote, poolLiquidityUsd },
   };
 }

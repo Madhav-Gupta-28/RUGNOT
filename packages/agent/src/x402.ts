@@ -65,6 +65,7 @@ function recordSettledPayment(state: StateStore) {
 export function createX402Router(state: StateStore): Router {
   const router = Router();
   const payTo = env.x402PayTo || env.agentWalletAddress;
+  const x402Misconfigured = env.x402Enabled && !isEvmAddress(payTo);
 
   if (env.x402Enabled && isEvmAddress(payTo)) {
     router.use(paymentMiddleware(
@@ -98,7 +99,15 @@ export function createX402Router(state: StateStore): Router {
     console.warn('[x402] Disabled paid security endpoint because X402_PAY_TO is not a valid EVM address.');
   }
 
-  router.post('/api/v1/security/check', recordSettledPayment(state), async (req, res) => {
+  router.post('/api/v1/security/check', (req, res, next) => {
+    if (x402Misconfigured) {
+      return res.status(503).json({
+        error: 'x402_misconfigured',
+        message: 'Paid security checks are enabled, but X402_PAY_TO is not a valid EVM address.',
+      });
+    }
+    return next();
+  }, recordSettledPayment(state), async (req, res) => {
     const tokenAddress = typeof req.body?.tokenAddress === 'string' ? req.body.tokenAddress : '';
     const chainId = req.body?.chainId ? String(req.body.chainId) : env.agentChainId;
 

@@ -309,6 +309,23 @@ export interface MarketSignal {
   cursor?: string;
 }
 
+export interface TokenHolderEntry {
+  holdPercent?: string;
+  holderWalletAddress?: string;
+}
+
+export interface TokenBalanceAsset {
+  chainIndex?: string;
+  tokenContractAddress?: string;
+  symbol?: string;
+  tokenSymbol?: string;
+  balance?: string;
+  rawBalance?: string;
+  uiAmount?: string;
+  price?: string;
+  tokenPrice?: string;
+}
+
 export async function getMarketPriceInfo(tokenAddresses: string[]): Promise<MarketPriceInfo[]> {
   if (tokenAddresses.length === 0) {
     return [];
@@ -353,6 +370,17 @@ export async function getMarketSignalList(params: {
   return response?.data ?? [];
 }
 
+export async function getTokenHolders(tokenAddress: string): Promise<TokenHolderEntry[]> {
+  const response = await callOkxRest<TokenHolderEntry>(
+    'GET',
+    `${OKX_MARKET_BASE_PATH}/token/holder${toQueryString({
+      chainIndex: env.agentChainId,
+      tokenContractAddress: tokenAddress,
+    })}`,
+  );
+  return response?.data ?? [];
+}
+
 /**
  * Convenience wrapper that asks the Market API for the Smart Money net flow on
  * a specific token over the most recent signals. Returns signed USD - positive
@@ -383,11 +411,21 @@ export async function getSmartMoneyNetFlow(tokenAddress: string): Promise<number
 }
 
 /**
- * Convenience wrapper to extract top-10 holder concentration from signal data.
- * Looks at the most recent signal touching this token and returns the embedded
- * `top10HolderPercent` field (0..100). Returns null if we can't read it.
+ * Read top-10 holder concentration from the dedicated token-holder endpoint.
+ * If OKX doesn't return holder rows for this token yet, fall back to the
+ * latest signal metadata where `top10HolderPercent` is sometimes embedded.
  */
 export async function getTop10HolderPercent(tokenAddress: string): Promise<number | null> {
+  const holders = await getTokenHolders(tokenAddress);
+  if (holders.length > 0) {
+    const top10 = holders
+      .slice(0, 10)
+      .reduce((sum, holder) => sum + readNumber(holder.holdPercent, 0), 0);
+    if (Number.isFinite(top10) && top10 >= 0 && top10 <= 100) {
+      return top10;
+    }
+  }
+
   const signals = await getMarketSignalList({
     tokenAddress,
     limit: 1,
@@ -395,6 +433,12 @@ export async function getTop10HolderPercent(tokenAddress: string): Promise<numbe
   const first = signals[0];
   const raw = first?.token?.top10HolderPercent;
   const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
+export async function getTopHolderPercent(tokenAddress: string): Promise<number | null> {
+  const holders = await getTokenHolders(tokenAddress);
+  const parsed = Number(holders[0]?.holdPercent);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
 }
 
@@ -541,6 +585,20 @@ export async function verifyOkxCredentials(): Promise<boolean> {
   return Boolean(response?.data?.length);
 }
 
+export async function getAllTokenBalancesByAddress(walletAddress: string): Promise<TokenBalanceAsset[]> {
+  const response = await callOkxRest<{ tokenAssets?: TokenBalanceAsset[] }>(
+    'GET',
+    `/api/v6/dex/balance/all-token-balances-by-address${toQueryString({
+      address: walletAddress,
+      chains: env.agentChainId,
+    })}`,
+    undefined,
+    1,
+  );
+
+  return response?.data?.flatMap((entry) => entry.tokenAssets ?? []) ?? [];
+}
+
 export async function getWalletOnchainBalances(walletAddress: string): Promise<{ okb: number; usdt: number }> {
   if (!walletAddress || walletAddress === '0x0000000000000000000000000000000000000196') {
     return { okb: 0, usdt: 0 };
@@ -564,14 +622,40 @@ export async function getWalletOnchainBalances(walletAddress: string): Promise<{
 }
 
 export async function fetchWalletBalances(walletAddress: string): Promise<{ walletBalance: number; positions: Position[] }> {
-  // We used to shell out to the `onchainos wallet portfolio tokens` CLI here,
-  // but that binary isn't available in hosted Node environments (Railway, etc.).
-  // The on-chain USDT balance is the source of truth for trading capital, and
-  // already-open positions are tracked in StateStore, so returning an empty
-  // position list on hydration is both accurate and safe: StateStore.positions
-  // is never overwritten if it already contains entries (see index.ts).
   const balances = await getWalletOnchainBalances(walletAddress);
-  return { walletBalance: balances.usdt, positions: [] };
+  const tokenAssets = await getAllTokenBalancesByAddress(walletAddress).catch((error) => {
+    console.warn('[OKX Balance] Could not load token balances by address:', error);
+    return [] as TokenBalanceAsset[];
+  });
+
+  const positions: Position[] = tokenAssets
+    .filter((asset) => String(asset.chainIndex ?? env.agentChainId) === env.agentChainId)
+    .filter((asset) => {
+      const tokenAddress = asset.tokenContractAddress?.toLowerCase() ?? '';
+      return Boolean(tokenAddress)
+        && tokenAddress !== XLAYER_TOKENS.USDT.toLowerCase()
+        && tokenAddress !== XLAYER_TOKENS.WOKB.toLowerCase()
+        && tokenAddress !== XLAYER_TOKENS.OKB.toLowerCase();
+    })
+    .map((asset) => {
+      const amount = readNumber(asset.balance ?? asset.uiAmount ?? 0, 0);
+      const currentPrice = readNumber(asset.tokenPrice ?? asset.price ?? 0, 0);
+      const tokenAddress = asset.tokenContractAddress ?? '';
+      return {
+        tokenAddress,
+        tokenSymbol: asset.symbol ?? asset.tokenSymbol ?? tokenAddress.slice(0, 6),
+        amount,
+        entryPrice: currentPrice,
+        currentPrice,
+        pnlPercent: 0,
+        pnlUsd: 0,
+        lastSecurityCheck: 0,
+        lastVerdictLevel: 'CAUTION',
+      } satisfies Position;
+    })
+    .filter((position) => position.amount > 0);
+
+  return { walletBalance: balances.usdt, positions };
 }
 
 export async function fetchTokenPrice(tokenAddress: string): Promise<number | null> {
