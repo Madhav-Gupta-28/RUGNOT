@@ -1,13 +1,18 @@
-import { Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 
 import { truncateAddress } from '../lib/format';
 import { useRugnotStore } from '../store';
-import { Sidebar } from './Sidebar';
+
+const links = [
+  { to: '/portfolio', label: 'PORTFOLIO' },
+  { to: '/security', label: 'SECURITY' },
+  { to: '/economics', label: 'ECONOMICS' },
+  { to: '/chat', label: 'CHAT' },
+];
 
 export function Layout() {
   const state = useRugnotStore((store) => store.state);
-  const error = useRugnotStore((store) => store.error);
-  const statusLabel = state.isPaused ? 'paused' : state.isRunning ? 'running' : 'stopped';
+  // Status indicator
   const statusTone = state.isPaused
     ? 'bg-accent-caution'
     : state.isRunning
@@ -15,42 +20,50 @@ export function Layout() {
       : 'bg-secondary';
 
   return (
-    <div className="min-h-screen bg-bg terminal-grid">
-      <Sidebar />
-      <div className="min-h-screen lg:pl-64">
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-border bg-bg-surface/95 px-4 backdrop-blur md:px-6">
-          <div className="flex items-center gap-3 lg:hidden">
-            <div className="font-mono text-lg font-bold text-accent-safe">RUGNOT</div>
-          </div>
-          <div className="hidden font-sans text-sm text-secondary lg:block">
-            The only DeFi agent that will not get you rugged.
-          </div>
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className={`h-2.5 w-2.5 rounded-full ${statusTone}`} />
-              <span className="hidden font-sans text-xs text-secondary sm:inline">
-                {statusLabel}
-              </span>
-            </div>
-            <div className="hidden font-mono text-xs text-secondary md:block">
-              {truncateAddress(state.walletAddress)}
-            </div>
-            <div className="rounded-full border border-border bg-bg px-3 py-1 font-mono text-xs text-primary">
+    <div className="min-h-screen bg-bg text-primary flex flex-col">
+      <header className="sticky top-0 z-50 flex h-16 sm:h-20 items-center justify-between border-b border-border bg-bg/95 px-4 backdrop-blur md:px-8 shrink-0">
+        <div className="flex items-center gap-3">
+          <Link to="/" className="font-mono text-xl sm:text-2xl font-bold text-primary flex items-center gap-2 hover:text-accent-safe transition">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2L2 22H22L12 2Z" stroke="#bcff2f" strokeWidth="2" strokeLinejoin="round"/>
+            </svg>
+            RUGNOT
+          </Link>
+        </div>
+
+        <nav className="hidden md:flex items-center gap-6">
+          {links.map((link) => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              end={link.to === '/'}
+              className={({ isActive }) => `font-mono text-[11px] sm:text-xs tracking-wider transition ${
+                isActive
+                  ? 'text-primary font-bold border-b-2 border-accent-safe pb-1'
+                  : 'text-secondary hover:text-primary'
+              }`}
+            >
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:flex items-center gap-2">
+            <span className={`h-2.5 w-2.5 rounded-full ${statusTone}`} />
+            <span className="font-mono text-xs text-secondary">
               {state.walletBalance.toFixed(2)} USDT
-            </div>
+            </span>
           </div>
-        </header>
+          <button className="rounded border border-border bg-bg px-4 py-2 font-mono text-xs text-primary transition hover:border-accent-safe hover:text-accent-safe">
+            {state.walletAddress ? truncateAddress(state.walletAddress) : 'CONNECT WALLET'}
+          </button>
+        </div>
+      </header>
 
-        {error ? (
-          <div className="border-b border-accent-caution/30 bg-accent-caution/10 px-6 py-2 font-sans text-sm text-accent-caution">
-            Backend offline or unreachable. Showing cached and demo-ready empty states.
-          </div>
-        ) : null}
-
-        <main className="h-[calc(100vh-3.5rem)] overflow-y-auto p-4 md:p-6">
-          <Outlet />
-        </main>
-      </div>
+      <main className="flex-1 overflow-y-auto px-4 py-8 md:px-8 xl:px-12 w-full mx-auto max-w-[120rem]">
+        <Outlet />
+      </main>
     </div>
   );
 }

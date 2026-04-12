@@ -5,34 +5,36 @@ export default {
     extend: {
       colors: {
         bg: {
-          DEFAULT: '#0a0a0f',
-          surface: '#12121a',
-          elevated: '#1a1a2e',
+          DEFAULT: '#000000',
+          surface: '#0a0a0a',
+          elevated: '#111111',
         },
-        surface: '#12121a',
-        elevated: '#1a1a2e',
+        surface: '#0a0a0a',
+        elevated: '#111111',
         border: {
-          DEFAULT: '#1e1e2e',
+          DEFAULT: '#1a1a1a',
+          light: '#222222',
         },
         accent: {
-          safe: '#00ff88',
-          caution: '#ff9500',
-          danger: '#ff3b3b',
-          info: '#3b82f6',
+          safe: '#bcff2f',
+          caution: '#ffb84d',
+          danger: '#ff4444',
+          info: '#4b8dff',
+          cyan: '#59d7ff',
         },
-        primary: '#e0e0e0',
-        secondary: '#6b6b80',
+        primary: '#f3f4f6',
+        secondary: '#9ca3af',
         text: {
-          primary: '#e0e0e0',
-          secondary: '#6b6b80',
+          primary: '#f3f4f6',
+          secondary: '#9ca3af',
         },
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'monospace'],
-        sans: ['DM Sans', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Roboto Mono', 'monospace'],
+        sans: ['Inter', 'DM Sans', 'sans-serif'],
       },
       borderRadius: {
-        xl: '8px',
+        xl: '4px',
       },
       animation: {
         'pulse-safe': 'pulse-safe 1.8s ease-in-out infinite',
@@ -41,8 +43,8 @@ export default {
       },
       keyframes: {
         'pulse-safe': {
-          '0%, 100%': { boxShadow: '0 0 0 rgba(0, 255, 136, 0)' },
-          '50%': { boxShadow: '0 0 18px rgba(0, 255, 136, 0.45)' },
+          '0%, 100%': { boxShadow: '0 0 0 rgba(188, 255, 47, 0)' },
+          '50%': { boxShadow: '0 0 18px rgba(188, 255, 47, 0.3)' },
         },
         'shake-danger': {
           '0%, 100%': { transform: 'translateX(0)' },

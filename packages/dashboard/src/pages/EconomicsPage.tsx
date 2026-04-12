@@ -6,6 +6,7 @@ interface StatCardProps {
   label: string;
   value: string;
   tone: 'safe' | 'caution' | 'info';
+  caption: string;
 }
 
 const toneClasses: Record<StatCardProps['tone'], string> = {
@@ -14,11 +15,12 @@ const toneClasses: Record<StatCardProps['tone'], string> = {
   info: 'text-accent-info',
 };
 
-function StatCard({ label, value, tone }: StatCardProps) {
+function StatCard({ label, value, tone, caption }: StatCardProps) {
   return (
-    <div className="rounded-xl border border-border bg-bg-surface p-4">
-      <div className={`font-mono text-3xl font-bold ${toneClasses[tone]}`}>{value}</div>
-      <div className="mt-2 font-sans text-sm text-secondary">{label}</div>
+    <div className="border border-border bg-bg/40 rounded-lg p-6 transition hover:border-accent-safe/40 hover:bg-bg/60 group shadow-sm">
+      <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-6 group-hover:text-primary transition">{label}</div>
+      <div className={`font-sans text-4xl lg:text-5xl font-light mb-3 tracking-tight ${toneClasses[tone]}`}>{value}</div>
+      <div className="font-mono text-xs text-secondary/70">{caption}</div>
     </div>
   );
 }
@@ -28,38 +30,47 @@ export function EconomicsPage() {
   const netProfit = state.x402TotalEarned - state.x402TotalSpent;
 
   return (
-    <div className="space-y-6">
-      <section>
-        <h1 className="font-sans text-2xl font-bold text-primary">Economics</h1>
-        <p className="mt-1 font-sans text-sm text-secondary">x402 revenue from paid security scans and agent spend.</p>
+    <div className="mx-auto max-w-7xl space-y-12 mt-4">
+      <section className="mb-12">
+        <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-3">NETWORK ECONOMICS</div>
+        <h1 className="font-sans text-4xl lg:text-5xl font-bold text-primary mb-4 tracking-tighter">X-402 PROTOCOL YIELD</h1>
+        <p className="font-sans text-lg text-secondary/80 max-w-3xl leading-relaxed">
+          Monitor revenue generated from OKX X Layer deployment, protocol security scans, and operational Stitch MPC agent expenditures.
+        </p>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Total Earned" value={`$${state.x402TotalEarned.toFixed(3)}`} tone="safe" />
-        <StatCard label="Total Spent" value={`$${state.x402TotalSpent.toFixed(3)}`} tone="caution" />
-        <StatCard label="Net Profit" value={`$${netProfit.toFixed(3)}`} tone="info" />
+      <section className="grid gap-6 sm:grid-cols-3">
+        <StatCard label="TOTAL EARNED" value={`$${state.x402TotalEarned.toFixed(3)}`} tone="safe" caption="Revenue from global security scans" />
+        <StatCard label="TOTAL SPENT" value={`$${state.x402TotalSpent.toFixed(3)}`} tone="caution" caption="Agent gas and MPC compute costs" />
+        <StatCard label="NET PROTOCOL PROFIT" value={`$${netProfit.toFixed(3)}`} tone="info" caption="Overall protocol capital efficiency" />
       </section>
 
-      <EconChart transactions={state.x402Transactions} />
+      <div className="mt-16">
+         <EconChart transactions={state.x402Transactions} />
+      </div>
 
-      <section className="rounded-xl border border-border bg-bg-surface">
-        <div className="border-b border-border p-4">
-          <h2 className="font-sans text-lg font-bold text-primary">Transactions</h2>
+      <section className="terminal-panel border border-border rounded-xl bg-bg/40 shadow-lg mt-12 mb-12">
+        <div className="border-b border-border p-6 flex flex-wrap items-center justify-between bg-bg/80">
+          <h2 className="font-sans text-xl font-bold text-primary uppercase tracking-tight">TRANSACTION LEDGER</h2>
+          <div className="font-mono text-[11px] text-secondary tracking-widest uppercase border border-border rounded-full px-4 py-1 bg-bg">{state.x402Transactions.length} ENTRIES</div>
         </div>
         {state.x402Transactions.length === 0 ? (
-          <div className="p-8 text-center font-sans text-sm text-secondary">
-            No x402 transactions yet. External security checks will show up as revenue here.
+          <div className="p-24 text-center">
+            <div className="font-mono text-[11px] uppercase text-secondary/60 mb-3 tracking-widest">NO X402 TRANSACTIONS RECORDED</div>
+            <p className="font-sans text-base text-secondary/80">
+               External protocol security check revenues executed on X Layer will stream here.
+            </p>
           </div>
         ) : (
-          <div className="divide-y divide-border">
+          <div className="divide-y divide-border/50">
             {state.x402Transactions.map((transaction) => (
-              <div key={transaction.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <span className={`font-mono text-lg ${transaction.direction === 'earned' ? 'text-accent-safe' : 'text-accent-caution'}`}>
-                  {transaction.direction === 'earned' ? '↑' : '↓'}
+              <div key={transaction.id} className="flex flex-wrap items-center gap-6 px-8 py-6 hover:bg-bg-elevated/70 transition group">
+                <span className={`font-mono text-sm font-bold flex items-center justify-center w-8 h-8 rounded-full border shadow-sm ${transaction.direction === 'earned' ? 'text-accent-safe border-accent-safe bg-accent-safe/10 shadow-[0_0_10px_rgba(188,255,47,0.2)]' : 'text-accent-caution border-accent-caution bg-accent-caution/10'}`}>
+                  {transaction.direction === 'earned' ? '+' : '-'}
                 </span>
-                <span className="font-mono text-sm text-primary">{formatMoney(transaction.amount, 3)}</span>
-                <span className="min-w-0 flex-1 font-sans text-sm text-secondary">{transaction.service.replace(/-/g, ' ')}</span>
-                <time className="font-mono text-xs text-secondary">{timeAgo(transaction.timestamp)}</time>
+                <span className="font-mono text-xl text-primary font-light min-w-[100px]">{formatMoney(transaction.amount, 3)}</span>
+                <span className="min-w-0 flex-1 font-sans text-base text-secondary/90 group-hover:text-primary transition">{transaction.service.replace(/-/g, ' ').toUpperCase()}</span>
+                <time className="font-mono text-[11px] tracking-widest text-secondary/60">{timeAgo(transaction.timestamp)}</time>
               </div>
             ))}
           </div>

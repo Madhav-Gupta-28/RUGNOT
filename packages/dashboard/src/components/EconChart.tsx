@@ -45,24 +45,26 @@ export function EconChart({ transactions }: EconChartProps) {
   const data = buildData(transactions);
 
   return (
-    <section className="rounded-xl border border-border bg-bg-surface p-4">
-      <div className="mb-4">
-        <h2 className="font-sans text-lg font-bold text-primary">x402 Flow</h2>
-        <p className="font-sans text-sm text-secondary">Security-check revenue and agent spend.</p>
+    <section className="rounded-xl border border-border bg-bg/40 p-8 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+      <div className="mb-8">
+        <h2 className="font-sans text-2xl font-bold text-primary mb-2 tracking-tight">X402 PROTOCOL FLOW</h2>
+        <p className="font-mono text-[10px] tracking-widest text-secondary uppercase">Security-check revenue vs MPC operational overheads.</p>
       </div>
-      <div className="h-72">
+      <div className="h-80 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data}>
-            <CartesianGrid stroke="#1e1e2e" strokeDasharray="3 3" />
-            <XAxis dataKey="label" stroke="#6b6b80" tickLine={false} axisLine={false} fontSize={12} />
-            <YAxis stroke="#6b6b80" tickLine={false} axisLine={false} fontSize={12} />
+          <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} barGap={6}>
+            <CartesianGrid stroke="#1a1a1a" vertical={false} strokeDasharray="4 4" />
+            <XAxis dataKey="label" stroke="#333333" tick={{fill: '#6b6b80', fontSize: 10, fontFamily: 'monospace'}} tickLine={false} axisLine={false} dy={10} />
+            <YAxis stroke="#333333" tick={{fill: '#6b6b80', fontSize: 10, fontFamily: 'monospace'}} tickLine={false} axisLine={false} />
             <Tooltip
-              contentStyle={{ background: '#12121a', border: '1px solid #1e1e2e', borderRadius: 8, color: '#e0e0e0' }}
-              formatter={(value) => [`$${Number(value).toFixed(3)}`, 'USDT']}
-              labelStyle={{ color: '#6b6b80' }}
+              contentStyle={{ background: '#0a0a0a', border: '1px solid #222222', borderRadius: 4, color: '#f3f4f6', fontFamily: 'monospace', fontSize: '12px' }}
+              itemStyle={{ fontWeight: 'bold' }}
+              formatter={(value, name) => [`$${Number(value).toFixed(3)}`, name === 'earned' ? 'EARNED' : 'SPENT']}
+              labelStyle={{ color: '#9ca3af', marginBottom: '8px' }}
+              cursor={{ fill: '#111111' }}
             />
-            <Bar dataKey="earned" fill="#00ff88" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="spent" fill="#ff9500" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="earned" fill="#bcff2f" radius={[4, 4, 0, 0]} maxBarSize={40} />
+            <Bar dataKey="spent" fill="#4b8dff" radius={[4, 4, 0, 0]} maxBarSize={40} />
           </BarChart>
         </ResponsiveContainer>
       </div>
