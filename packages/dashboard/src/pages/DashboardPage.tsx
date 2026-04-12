@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { formatMoney } from '../lib/format';
+import { apiPost } from '../lib/api';
 import { useRugnotStore } from '../store';
 import { LiveFeed } from '../components/LiveFeed';
 
@@ -36,10 +38,32 @@ function LoopCard({ index, title, description }: Readonly<{ index: string; title
   );
 }
 
+type DemoStatus = 'idle' | 'running' | 'done' | 'error';
+
 export function DashboardPage() {
   const state = useRugnotStore((store) => store.state);
   const portfolioValue = state.positions.reduce((sum, position) => sum + position.amount * position.currentPrice, 0);
   const dangerVerdicts = state.recentVerdicts.filter((verdict) => verdict.level === 'DANGER').length;
+  const [demoStatus, setDemoStatus] = useState<DemoStatus>('idle');
+  const [demoCountdown, setDemoCountdown] = useState(0);
+
+  const triggerDemo = async () => {
+    if (demoStatus === 'running') return;
+    setDemoStatus('running');
+    setDemoCountdown(8);
+    try {
+      await apiPost('/api/demo/trigger', {});
+      // Countdown while demo plays out (8 seconds)
+      const interval = setInterval(() => {
+        setDemoCountdown((c) => {
+          if (c <= 1) { clearInterval(interval); setDemoStatus('done'); return 0; }
+          return c - 1;
+        });
+      }, 1000);
+    } catch {
+      setDemoStatus('error');
+    }
+  };
   
   return (
     <div className="mx-auto max-w-7xl space-y-12">
@@ -64,18 +88,33 @@ export function DashboardPage() {
           </p>
           
           <div className="flex flex-wrap gap-4 mt-8">
-            <a
-              href="#live-feed"
-              className="rounded border border-accent-safe/30 bg-accent-safe/5 px-6 py-2.5 font-mono text-[11px] font-bold tracking-widest text-accent-safe transition-colors hover:bg-accent-safe/20 hover:border-accent-safe/60 flex items-center group"
+            <button
+              id="demo-trigger-btn"
+              onClick={() => void triggerDemo()}
+              disabled={demoStatus === 'running'}
+              className={`rounded border px-6 py-2.5 font-mono text-[11px] font-bold tracking-widest uppercase transition-all flex items-center gap-2 ${
+                demoStatus === 'done'
+                  ? 'border-accent-safe bg-accent-safe/20 text-accent-safe'
+                  : demoStatus === 'error'
+                    ? 'border-accent-danger bg-accent-danger/10 text-accent-danger'
+                    : demoStatus === 'running'
+                      ? 'border-accent-safe/50 bg-accent-safe/10 text-accent-safe cursor-wait'
+                      : 'border-accent-safe bg-accent-safe/10 text-accent-safe hover:bg-accent-safe/20 hover:border-accent-safe'
+              }`}
             >
-              <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-accent-safe" />
-              WATCH LIVE FEED
-            </a>
+              {demoStatus === 'running' && (
+                <span className="h-1.5 w-1.5 rounded-full bg-accent-safe animate-pulse-safe" />
+              )}
+              {demoStatus === 'idle' && '▶ TRIGGER LIVE DEMO'}
+              {demoStatus === 'running' && `DEMO RUNNING... ${demoCountdown}s`}
+              {demoStatus === 'done' && '✓ DEMO COMPLETE — CHECK LIVE FEED'}
+              {demoStatus === 'error' && '✗ DEMO FAILED — ENABLE_DEMO=true?'}
+            </button>
             <Link
-              to="/security"
+              to="/scan"
               className="rounded border border-[#333333] bg-transparent px-6 py-2.5 font-mono text-[11px] font-bold tracking-widest text-secondary transition-colors hover:border-secondary hover:text-primary uppercase"
             >
-              VERIFY EXECUTIONS
+              SCAN A TOKEN →
             </Link>
           </div>
         </div>
