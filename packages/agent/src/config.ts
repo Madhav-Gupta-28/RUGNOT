@@ -89,8 +89,8 @@ export interface AppEnv {
   x402PayTo: string;
   x402Network: string;
   x402FacilitatorUrl: string;
-  anthropicApiKey: string;
-  anthropicModel: string;
+  googleApiKey: string;
+  googleModel: string;
   statePersistencePath: string;
   adminToken: string;
   port: number;
@@ -124,8 +124,8 @@ export const env: AppEnv = {
   x402PayTo: readEnv('X402_PAY_TO', readEnv('AGENT_WALLET_ADDRESS', '0x0000000000000000000000000000000000000196')),
   x402Network: readEnv('X402_NETWORK', 'base'),
   x402FacilitatorUrl: readEnv('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
-  anthropicApiKey: readEnv('ANTHROPIC_API_KEY'),
-  anthropicModel: readEnv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
+  googleApiKey: readEnv('GOOGLE_GENERATIVE_AI_API_KEY'),
+  googleModel: readEnv('GOOGLE_MODEL', 'gemini-2.5-flash'),
   statePersistencePath: resolveRuntimePath('STATE_PERSISTENCE_PATH', '.rugnot-state.json'),
   adminToken: readEnv('ADMIN_TOKEN'),
   port: parseNumber('PORT', 3001),
