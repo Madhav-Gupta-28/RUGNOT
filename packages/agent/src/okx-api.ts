@@ -27,7 +27,11 @@ export const XLAYER_TOKENS = {
   OKB: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
   WOKB: '0x75E1AB5E0e3BA13b3520349F069350441CF53c0A',
   WETH: '0x5A77f1443D16ee5761d310e38b62f77f726bC71c',
-  USDT: '0x1E4a5963aBFD975d8c9021ce480b42188849D41d',
+  // Current OKX-routed USDT on X Layer. The older 0x1E4a... token is still
+  // routable as XLAYER_USDT on the aggregator, but new OKX deposits are landing
+  // in this USDt0 / USDT contract.
+  USDT: '0x779ded0c9e1022225f8e0630b35a9b54be713736',
+  XLAYER_USDT: '0x1E4a5963aBFD975d8c9021ce480b42188849D41d',
   USDC: '0x74b7F16337b8972027F6196A17a631ac6dE26d22',
 } as const;
 
@@ -216,6 +220,7 @@ export async function callOkxRest<T>(
   pathWithQuery: string,
   body?: object | object[],
   retries = 2,
+  logErrors = true,
 ): Promise<OkxEnvelope<T> | null> {
   if (!hasLiveCredentials()) {
     return null;
@@ -229,6 +234,8 @@ export async function callOkxRest<T>(
     await acquireRateLimitToken();
     try {
       const timestamp = new Date().toISOString();
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
       // For GET, OKX signs `timestamp + METHOD + path + queryString`.
       // For POST, OKX signs `timestamp + METHOD + path + bodyStr` - queryString is
       // not part of the signature. We still attach queryString to the fetch URL in
@@ -238,19 +245,26 @@ export async function callOkxRest<T>(
         method,
         headers: getHeaders(timestamp, method, requestPath, signaturePayload),
         body: method === 'GET' ? undefined : bodyStr,
-      });
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeout));
 
       if (!response.ok) {
-        console.error(`[OKX REST] ${response.status} ${method} ${requestPath}${queryString}`);
+        if (logErrors) {
+          console.error(`[OKX REST] ${response.status} ${method} ${requestPath}${queryString}`);
+        }
       } else {
         const json = await response.json() as OkxEnvelope<T>;
         if (json.code === '0') {
           return json;
         }
-        console.error(`[OKX REST] Error ${json.code}: ${json.msg} for ${requestPath}${queryString}`);
+        if (logErrors) {
+          console.error(`[OKX REST] Error ${json.code}: ${json.msg} for ${requestPath}${queryString}`);
+        }
       }
     } catch (error) {
-      console.error(`[OKX REST] Network error for ${requestPath}${queryString}:`, error);
+      if (logErrors) {
+        console.error(`[OKX REST] Network error for ${requestPath}${queryString}:`, error);
+      }
     }
 
     if (attempt < retries - 1) {
@@ -309,9 +323,31 @@ export interface MarketSignal {
   cursor?: string;
 }
 
+export interface MarketTopToken {
+  chainIndex?: string;
+  change?: string;
+  firstTradeTime?: string;
+  holders?: string;
+  liquidity?: string;
+  marketCap?: string;
+  price?: string;
+  tokenContractAddress?: string;
+  tokenLogoUrl?: string;
+  tokenSymbol?: string;
+  txs?: string;
+  txsBuy?: string;
+  txsSell?: string;
+  uniqueTraders?: string;
+  volume?: string;
+}
+
 export interface TokenHolderEntry {
   holdPercent?: string;
+  holdAmount?: string;
   holderWalletAddress?: string;
+  totalPnlUsd?: string;
+  realizedPnlUsd?: string;
+  unrealizedPnlUsd?: string;
 }
 
 export interface TokenBalanceAsset {
@@ -325,6 +361,8 @@ export interface TokenBalanceAsset {
   price?: string;
   tokenPrice?: string;
 }
+
+let marketSignalListUnavailableUntil = 0;
 
 export async function getMarketPriceInfo(tokenAddresses: string[]): Promise<MarketPriceInfo[]> {
   if (tokenAddresses.length === 0) {
@@ -353,6 +391,10 @@ export async function getMarketSignalList(params: {
   minLiquidityUsd?: string;
   limit?: number;
 }): Promise<MarketSignal[]> {
+  if (Date.now() < marketSignalListUnavailableUntil) {
+    return [];
+  }
+
   const body: Record<string, string> = {
     chainIndex: env.agentChainId,
     limit: String(params.limit ?? 50),
@@ -366,8 +408,31 @@ export async function getMarketSignalList(params: {
     'POST',
     `${OKX_MARKET_BASE_PATH}/signal/list`,
     [body],
+    1,
+    false,
   );
+  if (!response) {
+    // OKX currently advertises X Layer support for signal/list but can return
+    // application error -1 with an empty message. Back off to avoid noisy logs;
+    // Scout falls back to token/toplist below.
+    marketSignalListUnavailableUntil = Date.now() + 5 * 60_000;
+  }
   return response?.data ?? [];
+}
+
+export async function getMarketTokenTopList(limit = 50): Promise<MarketTopToken[]> {
+  const response = await callOkxRest<MarketTopToken>(
+    'GET',
+    `${OKX_MARKET_BASE_PATH}/token/toplist${toQueryString({
+      chains: env.agentChainId,
+      sortBy: 5,
+      timeFrame: 4,
+    })}`,
+    undefined,
+    1,
+  );
+
+  return (response?.data ?? []).slice(0, limit);
 }
 
 export async function getTokenHolders(tokenAddress: string): Promise<TokenHolderEntry[]> {
@@ -418,10 +483,13 @@ export async function getSmartMoneyNetFlow(tokenAddress: string): Promise<number
 export async function getTop10HolderPercent(tokenAddress: string): Promise<number | null> {
   const holders = await getTokenHolders(tokenAddress);
   if (holders.length > 0) {
-    const top10 = holders
-      .slice(0, 10)
-      .reduce((sum, holder) => sum + readNumber(holder.holdPercent, 0), 0);
-    if (Number.isFinite(top10) && top10 >= 0 && top10 <= 100) {
+    // Defensive sort: guarantee we're summing the largest holders, regardless
+    // of the order the API returns them in.
+    const sorted = [...holders]
+      .map((h) => readNumber(h.holdPercent, 0))
+      .sort((a, b) => b - a);
+    const top10 = sorted.slice(0, 10).reduce((sum, pct) => sum + pct, 0);
+    if (Number.isFinite(top10) && top10 > 0 && top10 <= 100) {
       return top10;
     }
   }
@@ -438,8 +506,10 @@ export async function getTop10HolderPercent(tokenAddress: string): Promise<numbe
 
 export async function getTopHolderPercent(tokenAddress: string): Promise<number | null> {
   const holders = await getTokenHolders(tokenAddress);
-  const parsed = Number(holders[0]?.holdPercent);
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+  if (holders.length === 0) return null;
+  // Pick the largest holder's percent, sorting defensively.
+  const max = Math.max(...holders.map((h) => readNumber(h.holdPercent, 0)));
+  return Number.isFinite(max) && max > 0 && max <= 100 ? max : null;
 }
 
 export async function callOkxApi<T>(
@@ -497,7 +567,11 @@ export async function getTokenMetadata(tokenAddress: string): Promise<TokenInfo 
 }
 
 export async function getTokenDecimals(tokenAddress: string, fallback = 18): Promise<number> {
-  if (tokenAddress.toLowerCase() === XLAYER_TOKENS.USDT.toLowerCase()) {
+  const normalizedToken = tokenAddress.toLowerCase();
+  if (
+    normalizedToken === XLAYER_TOKENS.USDT.toLowerCase() ||
+    normalizedToken === XLAYER_TOKENS.XLAYER_USDT.toLowerCase()
+  ) {
     return 6;
   }
 
@@ -606,14 +680,17 @@ export async function getWalletOnchainBalances(walletAddress: string): Promise<{
 
   try {
     const currentProvider = getProvider();
-    const [okbRaw, usdtRaw] = await Promise.all([
+    const [okbRaw, usdtRaw, legacyUsdtRaw] = await Promise.all([
       currentProvider.getBalance(walletAddress),
       new ethers.Contract(XLAYER_TOKENS.USDT, ERC20_ABI, currentProvider).balanceOf(walletAddress) as Promise<bigint>,
+      new ethers.Contract(XLAYER_TOKENS.XLAYER_USDT, ERC20_ABI, currentProvider).balanceOf(walletAddress) as Promise<bigint>,
     ]);
+    const usdt = Number(ethers.formatUnits(usdtRaw, 6));
+    const legacyUsdt = Number(ethers.formatUnits(legacyUsdtRaw, 6));
 
     return {
       okb: Number(ethers.formatEther(okbRaw)),
-      usdt: Number(ethers.formatUnits(usdtRaw, 6)),
+      usdt: usdt + legacyUsdt,
     };
   } catch (error) {
     console.warn('[X Layer] Could not read wallet balances:', error);
@@ -634,6 +711,7 @@ export async function fetchWalletBalances(walletAddress: string): Promise<{ wall
       const tokenAddress = asset.tokenContractAddress?.toLowerCase() ?? '';
       return Boolean(tokenAddress)
         && tokenAddress !== XLAYER_TOKENS.USDT.toLowerCase()
+        && tokenAddress !== XLAYER_TOKENS.XLAYER_USDT.toLowerCase()
         && tokenAddress !== XLAYER_TOKENS.WOKB.toLowerCase()
         && tokenAddress !== XLAYER_TOKENS.OKB.toLowerCase();
     })
@@ -710,49 +788,94 @@ export async function fetchSignalFeed(): Promise<TradeOpportunity[]> {
   };
 
   const deduped = new Map<string, TradeOpportunity>();
+  const skippedTokenAddresses = new Set([
+    XLAYER_TOKENS.USDT.toLowerCase(),
+    XLAYER_TOKENS.XLAYER_USDT.toLowerCase(),
+    XLAYER_TOKENS.USDC.toLowerCase(),
+    XLAYER_TOKENS.WOKB.toLowerCase(),
+    XLAYER_TOKENS.OKB.toLowerCase(),
+    XLAYER_TOKENS.WETH.toLowerCase(),
+  ]);
 
-  for (const walletType of ['1', '2', '3'] as const) {
-    const signals = await getMarketSignalList({ walletType, limit: 50 });
-    for (const signal of signals) {
-      const tokenAddress = signal.token?.tokenContractAddress ?? signal.token?.tokenAddress ?? '';
-      if (!tokenAddress) {
+  const signals = await getMarketSignalList({ walletType: '1,2,3', limit: 50 });
+  for (const signal of signals) {
+    const tokenAddress = signal.token?.tokenContractAddress ?? signal.token?.tokenAddress ?? '';
+    if (!tokenAddress) {
+      continue;
+    }
+
+    // Skip USDT / WOKB / base tokens - we trade _into_ those, not _from_.
+    const lowered = tokenAddress.toLowerCase();
+    if (skippedTokenAddresses.has(lowered)) {
+      continue;
+    }
+
+    const amountUsd = Number(signal.amountUsd ?? 0);
+    const walletCount = Number(signal.triggerWalletCount ?? 1);
+    const soldRatio = Number(signal.soldRatioPercent ?? 0);
+
+    // Ignore sell-side signals - they're not buy opportunities.
+    if (Number.isFinite(soldRatio) && soldRatio > 50) {
+      continue;
+    }
+
+    // Simple score: USD size (log-scaled) plus wallet-count weight, clamped.
+    const sizeScore = Number.isFinite(amountUsd) && amountUsd > 0
+      ? Math.min(80, 40 + Math.log10(Math.max(1, amountUsd)) * 10)
+      : 40;
+    const countBoost = Number.isFinite(walletCount) && walletCount > 1
+      ? Math.min(20, walletCount * 2)
+      : 0;
+    const signalStrength = Math.round(Math.max(0, Math.min(100, sizeScore + countBoost)));
+    const walletType = String(signal.walletType ?? '3');
+
+    const candidate: TradeOpportunity = {
+      tokenAddress,
+      tokenSymbol: signal.token?.symbol ?? tokenAddress.slice(0, 6),
+      signalType: walletTypeToSignalType[walletType] ?? 'volume-spike',
+      signalStrength,
+      currentPrice: Number(signal.price ?? 0),
+    };
+
+    const current = deduped.get(tokenAddress);
+    if (!current || candidate.signalStrength > current.signalStrength) {
+      deduped.set(tokenAddress, candidate);
+    }
+  }
+
+  if (deduped.size === 0) {
+    const topTokens = await getMarketTokenTopList(50);
+    for (const token of topTokens) {
+      const tokenAddress = token.tokenContractAddress ?? '';
+      if (!tokenAddress || skippedTokenAddresses.has(tokenAddress.toLowerCase())) {
         continue;
       }
 
-      // Skip USDT / WOKB / base tokens - we trade _into_ those, not _from_.
-      const lowered = tokenAddress.toLowerCase();
-      if (
-        lowered === XLAYER_TOKENS.USDT.toLowerCase() ||
-        lowered === XLAYER_TOKENS.WOKB.toLowerCase() ||
-        lowered === XLAYER_TOKENS.OKB.toLowerCase()
-      ) {
+      const volume = readNumber(token.volume, 0);
+      const liquidity = readNumber(token.liquidity, 0);
+      const uniqueTraders = readNumber(token.uniqueTraders, 0);
+      const txsBuy = readNumber(token.txsBuy, 0);
+      const txsSell = readNumber(token.txsSell, 0);
+      const change = readNumber(token.change, 0);
+      const totalDirectionalTxs = txsBuy + txsSell;
+      const buyRatio = totalDirectionalTxs > 0 ? txsBuy / totalDirectionalTxs : 0.5;
+
+      if (liquidity > 0 && liquidity < 10_000) {
         continue;
       }
 
-      const amountUsd = Number(signal.amountUsd ?? 0);
-      const walletCount = Number(signal.triggerWalletCount ?? 1);
-      const soldRatio = Number(signal.soldRatioPercent ?? 0);
-
-      // Ignore sell-side signals - they're not buy opportunities.
-      if (Number.isFinite(soldRatio) && soldRatio > 50) {
-        continue;
-      }
-
-      // Simple score: USD size (log-scaled) plus wallet-count weight, clamped.
-      const sizeScore = Number.isFinite(amountUsd) && amountUsd > 0
-        ? Math.min(80, 40 + Math.log10(Math.max(1, amountUsd)) * 10)
-        : 40;
-      const countBoost = Number.isFinite(walletCount) && walletCount > 1
-        ? Math.min(20, walletCount * 2)
-        : 0;
-      const signalStrength = Math.round(Math.max(0, Math.min(100, sizeScore + countBoost)));
+      const volumeScore = volume > 0 ? Math.min(45, Math.log10(Math.max(1, volume)) * 8) : 20;
+      const traderScore = Math.min(20, uniqueTraders);
+      const buyPressureScore = Math.max(-15, Math.min(15, (buyRatio - 0.5) * 60));
+      const momentumScore = Math.max(-10, Math.min(20, change));
+      const signalStrength = Math.round(Math.max(0, Math.min(100, 30 + volumeScore + traderScore + buyPressureScore + momentumScore)));
 
       const candidate: TradeOpportunity = {
         tokenAddress,
-        tokenSymbol: signal.token?.symbol ?? tokenAddress.slice(0, 6),
-        signalType: walletTypeToSignalType[walletType],
+        tokenSymbol: token.tokenSymbol ?? tokenAddress.slice(0, 6),
+        signalType: 'volume-spike',
         signalStrength,
-        currentPrice: Number(signal.price ?? 0),
+        currentPrice: readNumber(token.price, 0),
       };
 
       const current = deduped.get(tokenAddress);

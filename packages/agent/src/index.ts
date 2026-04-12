@@ -6,13 +6,14 @@ import express from 'express';
 import { agentConfig, env } from './config.js';
 import { executeOpportunity } from './executor.js';
 import { createMcpHttpRouter, startMcpServer } from './mcp.js';
-import { fetchWalletBalances, getWalletOnchainBalances, verifyOkxCredentials } from './okx-api.js';
+import { XLAYER_TOKENS, fetchWalletBalances, getWalletOnchainBalances, verifyOkxCredentials } from './okx-api.js';
 import { createApiRouter, createDemoRouter } from './routes.js';
 import { runScoutCycle } from './scout.js';
 import { runSentinelCycle } from './sentinel.js';
 import { StateStore } from './state.js';
 import { attachWebSocketServer } from './ws.js';
 import { createX402Router } from './x402.js';
+import type { Position } from './types.js';
 
 const app = express();
 const server = createServer(app);
@@ -21,6 +22,15 @@ let liveApiAvailable = false;
 let discoveryEnabled = false;
 let discoveryInFlight = false;
 let defenseInFlight = false;
+
+const BASE_POSITION_TOKENS = new Set([
+  XLAYER_TOKENS.USDT.toLowerCase(),
+  XLAYER_TOKENS.XLAYER_USDT.toLowerCase(),
+  XLAYER_TOKENS.USDC.toLowerCase(),
+  XLAYER_TOKENS.WOKB.toLowerCase(),
+  XLAYER_TOKENS.OKB.toLowerCase(),
+  XLAYER_TOKENS.WETH.toLowerCase(),
+]);
 
 const allowedOrigins = process.env.DASHBOARD_ORIGIN
   ?.split(',')
@@ -54,8 +64,33 @@ async function hydrateWalletState(): Promise<void> {
   const wallet = await fetchWalletBalances(env.agentWalletAddress);
   state.setWalletBalance(wallet.walletBalance);
 
-  if (state.get().positions.length === 0 && wallet.positions.length > 0) {
-    state.replacePositions(wallet.positions);
+  const persistedPositions = state
+    .get()
+    .positions
+    .filter((position) => !BASE_POSITION_TOKENS.has(position.tokenAddress.toLowerCase()));
+
+  if (wallet.positions.length > 0) {
+    const byAddress = new Map(persistedPositions.map((position) => [
+      position.tokenAddress.toLowerCase(),
+      position,
+    ]));
+    const mergedPositions: Position[] = wallet.positions.map((position) => {
+      const existing = byAddress.get(position.tokenAddress.toLowerCase());
+      return existing
+        ? {
+            ...position,
+            entryPrice: existing.entryPrice,
+            lastSecurityCheck: existing.lastSecurityCheck,
+            lastVerdictLevel: existing.lastVerdictLevel,
+          }
+        : position;
+    });
+    state.replacePositions(mergedPositions);
+    return;
+  }
+
+  if (persistedPositions.length !== state.get().positions.length) {
+    state.replacePositions(persistedPositions);
   }
 }
 

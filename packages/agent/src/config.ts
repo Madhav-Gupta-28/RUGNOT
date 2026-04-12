@@ -109,7 +109,7 @@ export const env: AppEnv = {
   x402Network: readEnv('X402_NETWORK', 'base'),
   x402FacilitatorUrl: readEnv('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
   anthropicApiKey: readEnv('ANTHROPIC_API_KEY'),
-  anthropicModel: readEnv('ANTHROPIC_MODEL', 'claude-sonnet-4-5'),
+  anthropicModel: readEnv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
   statePersistencePath: readEnv('STATE_PERSISTENCE_PATH', '.rugnot-state.json'),
   adminToken: readEnv('ADMIN_TOKEN'),
   port: parseNumber('PORT', 3001),

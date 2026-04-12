@@ -98,6 +98,10 @@ export function createApiRouter(state: StateStore): Router {
   });
 
   router.post('/api/settings', (req, res) => {
+    if (!isAdminAuthorized(req)) {
+      return res.status(401).json({ error: 'admin token required' });
+    }
+
     const updates = sanitizeConfigUpdate(req.body ?? {});
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No valid settings provided' });
