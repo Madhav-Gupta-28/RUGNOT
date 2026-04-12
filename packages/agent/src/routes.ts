@@ -229,70 +229,8 @@ interface DemoToken {
   checks: Array<[string, boolean, number, string]>;
 }
 
-const demoTokens: DemoToken[] = [
-  {
-    symbol: 'XPUMP',
-    level: 'GO' as const,
-    score: 82,
-    price: 0.037,
-    checks: [
-      ['Contract Safety', true, 88, 'Contract checks passed'],
-      ['Holder Analysis', true, 76, 'Top 10 holders: 24.0%'],
-      ['Smart Money', true, 80, 'Smart money buying'],
-      ['Liquidity', true, 84, '$100 swap impact: 1.60%'],
-      ['Tx Simulation', true, 90, 'Simulation passed'],
-    ],
-  },
-  {
-    symbol: 'LAYERDOG',
-    level: 'CAUTION' as const,
-    score: 45,
-    price: 0.0048,
-    checks: [
-      ['Contract Safety', true, 62, 'Proxy contract detected'],
-      ['Holder Analysis', false, 34, 'Top 10 holders: 66.0%'],
-      ['Smart Money', false, 28, 'Smart money SELLING'],
-      ['Liquidity', true, 55, '$100 swap impact: 4.50%'],
-      ['Tx Simulation', true, 48, 'Simulation passed with warnings'],
-    ],
-  },
-  {
-    symbol: 'OKXAI',
-    level: 'DANGER' as const,
-    score: 8,
-    price: 1.42,
-    checks: [
-      ['Contract Safety', false, 0, 'HONEYPOT DETECTED'],
-      ['Holder Analysis', false, 18, 'Top 10 holders: 82.0%'],
-      ['Smart Money', false, 12, 'Smart money SELLING'],
-      ['Liquidity', false, 10, '$100 swap impact: 14.20%'],
-      ['Tx Simulation', false, 0, 'Simulation FAILED: sell blocked'],
-    ],
-  },
-];
 
-function randomAddress(seed: string): string {
-  const hex = Buffer.from(`${seed}-${Date.now()}-${Math.random()}`).toString('hex');
-  return `0x${hex.padEnd(40, '0').slice(0, 40)}`;
-}
 
-function makeChecks(rows: Array<[string, boolean, number, string]>): SecurityCheck[] {
-  return rows.map(([name, passed, score, reason]) => ({ name, passed, score, reason }));
-}
-
-function makeVerdict(tokenAddress: string, level: VerdictLevel, score: number, checks: SecurityCheck[]): Verdict {
-  return {
-    tokenAddress,
-    chain: 'xlayer',
-    level,
-    score,
-    checks,
-    timestamp: Date.now(),
-    executionTimeMs: 420 + Math.floor(Math.random() * 900),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Realistic fake tx hash — 64 hex chars like a real EVM tx
 // ---------------------------------------------------------------------------
 function fakeTxHash(seed: string): string {
@@ -577,7 +515,7 @@ export function createDemoRouter(state: StateStore): Router {
       };
       const profitAlert: ThreatAlert = {
         id: uuidv4(), tokenAddress: addr2, tokenSymbol: goToken2.symbol,
-        threatType: 'profit-target', severity: 'low',
+        threatType: 'price-crash', severity: 'medium',
         description: 'Profit target reached (+14%). Sentinel locked in gains.',
         action: 'auto-exit', exitTxHash: exitTx2, timestamp: Date.now(),
       };
