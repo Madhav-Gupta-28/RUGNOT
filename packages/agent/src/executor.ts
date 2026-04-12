@@ -4,13 +4,11 @@ import { ethers } from 'ethers';
 import { env } from './config.js';
 import {
   DEFAULT_SLIPPAGE,
-  XLAYER_CHAIN_ID,
   XLAYER_TOKENS,
   fromBaseUnits,
   getAggregatorQuote,
   getAggregatorSwapData,
   getApproveTransaction,
-  getDexClient,
   getProvider,
   getSigner,
   getTokenDecimals,
@@ -70,11 +68,6 @@ async function waitForTxWithTimeout(tx: ethers.TransactionResponse): Promise<str
     console.error('[Executor] tx.wait failed:', error);
     return null;
   }
-}
-
-function readNumber(value: unknown, fallback = 0): number {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function calculatePortfolioExposure(positions: Position[]): number {
@@ -151,61 +144,6 @@ async function sendRawTransaction(rawTx: Record<string, unknown>, fallbackTo: st
     console.error('[Executor] Raw transaction failed:', error);
     return null;
   });
-}
-
-async function executeSdkSwap(params: {
-  fromTokenAddress: string;
-  toTokenAddress: string;
-  amount: string;
-  toDecimals: number;
-  walletAddress: string;
-}): Promise<SwapResult | null> {
-  const client = getDexClient();
-  if (!client) {
-    return null;
-  }
-
-  try {
-    const quote = await client.dex.getQuote({
-      chainIndex: XLAYER_CHAIN_ID,
-      fromTokenAddress: params.fromTokenAddress,
-      toTokenAddress: params.toTokenAddress,
-      amount: params.amount,
-      slippagePercent: DEFAULT_SLIPPAGE,
-    });
-    const quoteData = quote.data?.[0];
-
-    if (!isNativeToken(params.fromTokenAddress)) {
-      await withNonceMutex(() => client.dex.executeApproval({
-        chainIndex: XLAYER_CHAIN_ID,
-        tokenContractAddress: params.fromTokenAddress,
-        approveAmount: params.amount,
-      }));
-    }
-
-    const swap = await withNonceMutex(() => client.dex.executeSwap({
-      chainIndex: XLAYER_CHAIN_ID,
-      fromTokenAddress: params.fromTokenAddress,
-      toTokenAddress: params.toTokenAddress,
-      amount: params.amount,
-      slippagePercent: DEFAULT_SLIPPAGE,
-      userWalletAddress: params.walletAddress,
-    }));
-
-    const amountOut = swap.details?.toToken?.amount
-      ? readNumber(swap.details.toToken.amount)
-      : fromBaseUnits(quoteData?.toTokenAmount ?? '0', params.toDecimals);
-
-    return {
-      amountOut,
-      txHash: swap.transactionId,
-      status: swap.transactionId ? 'confirmed' : 'failed',
-      raw: { quote, swap },
-    };
-  } catch (error) {
-    console.warn('[Executor] OKX SDK swap failed, falling back to REST:', error);
-    return null;
-  }
 }
 
 async function executeRawRestSwap(params: {
@@ -295,13 +233,7 @@ async function requestSwap(params: {
   const toDecimals = params.side === 'buy' ? await getTokenDecimals(params.tokenAddress) : 6;
   const amount = toBaseUnits(params.amount, fromDecimals);
 
-  return await executeSdkSwap({
-    fromTokenAddress,
-    toTokenAddress,
-    amount,
-    toDecimals,
-    walletAddress: params.walletAddress,
-  }) ?? await executeRawRestSwap({
+  return await executeRawRestSwap({
     fromTokenAddress,
     toTokenAddress,
     amount,

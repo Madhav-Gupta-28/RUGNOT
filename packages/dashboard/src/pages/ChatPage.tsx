@@ -55,12 +55,23 @@ export function ChatPage() {
 
   return (
     <div className="flex h-full min-h-[calc(100vh-7rem)] flex-col">
-      <section className="mb-4">
-        <h1 className="font-sans text-2xl font-bold text-primary">Chat</h1>
-        <p className="mt-1 font-sans text-sm text-secondary">Ask the agent for portfolio safety, opportunities, and revenue status.</p>
-      </section>
+      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-[#1a1a1a] pb-6 mt-4 shrink-0">
+        <div>
+           <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">AGENT INTERFACE</div>
+           <h1 className="font-sans text-3xl font-bold text-primary tracking-tight">Copilot Terminal</h1>
+        </div>
+        <div className="flex gap-8 sm:gap-12 text-left md:text-right">
+           <div>
+             <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2 flex items-center gap-2 justify-start md:justify-end">
+               <span className="w-1.5 h-1.5 rounded-full bg-accent-safe animate-pulse-safe" />
+               INTELLIGENCE
+             </div>
+             <div className="font-mono text-2xl text-primary tracking-widest text-[16px]">CLAUDE 3.5</div>
+           </div>
+        </div>
+      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border bg-bg/40 p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto terminal-panel rounded-md border border-[#1a1a1a] bg-[#050505] p-4 sm:p-6">
         <div className="flex flex-col gap-3">
           {messages.map((message) => (
             <ChatBubble key={message.id} message={message} />

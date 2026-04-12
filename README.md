@@ -2,7 +2,7 @@
 
 **The only DeFi agent that won't get you rugged.**
 
-`X Layer` | `OKX DEX Aggregator` | `OKX Market API` | `Claude Tool Use` | `x402` | `MCP`
+`X Layer` | `OKX DEX Aggregator` | `OKX Market API` | `Gemini Tool Use` | `x402` | `MCP`
 
 ## What is RUGNOT?
 
@@ -23,7 +23,7 @@ LOOP A: DISCOVERY (every 60s)          LOOP B: DEFENSE (every 120s)
 
            SHARED SERVICES
   +-----------+-----------+-----------+------------+------------+
-  | StateStore| WS Server | x402 API  | MCP Server | Claude Chat|
+  | StateStore| WS Server | x402 API  | MCP Server | Gemini Chat|
   | JSON disk | dashboard | paid scan | stdio/http | tool use   |
   +-----------+-----------+-----------+------------+------------+
 
@@ -36,7 +36,7 @@ LOOP A: DISCOVERY (every 60s)          LOOP B: DEFENSE (every 120s)
 | Capability | How RUGNOT uses it |
 |---|---|
 | OKX DEX Aggregator v6 quote | Live tradeability checks, price quotes, price impact, honeypot/tax metadata. |
-| OKX DEX Aggregator v6 swap | Real X Layer swap execution with SDK-first flow and REST fallback. |
+| OKX DEX Aggregator v6 swap | Real X Layer swap execution through direct REST quote, approval, swap tx generation, and ethers signing. |
 | OKX approval transaction API | ERC-20 approval transaction generation before raw REST swaps. |
 | OKX all-tokens metadata | Token symbol, decimals, price, tax, and honeypot metadata for Guardian checks. |
 | OKX Market price-info | Portfolio mark prices and market/liquidity context. |
@@ -54,9 +54,9 @@ Verdict: GO (score: 74)
 
 The Guardian returns `GO`, `CAUTION`, or `DANGER`. Entry-side scans skip trades when data is weak. Exit-side scans are stricter: if a held token loses all security visibility, Sentinel treats that as DANGER because live capital is already at risk.
 
-## Claude Chat
+## Gemini Chat
 
-The dashboard chat is backed by the Anthropic TypeScript SDK when `ANTHROPIC_API_KEY` is configured. Claude receives three live tools:
+The dashboard chat is backed by Google Gemini through the AI SDK when `GOOGLE_GENERATIVE_AI_API_KEY` is configured. Gemini receives three live tools:
 
 - `check_token_safety` - run the 5-layer Guardian Pipeline for a token.
 - `get_portfolio_risks` - re-check every open position.
@@ -66,7 +66,7 @@ If the API key is absent, the chat falls back to a local state summary instead o
 
 ## x402 Integration
 
-`POST /api/v1/security/check` is protected with the official `x402-express` middleware. The endpoint sells RUGNOT security verdicts for `$0.005` per check by default.
+`POST /api/v1/security/check` uses an in-repo x402 exact EVM implementation that verifies and settles payments through the x402 facilitator. The endpoint sells RUGNOT security verdicts for `$0.005` per check by default.
 
 The protected resource analyzes X Layer tokens, while payment settlement uses x402-supported USDC rails. Default config is Base + USDC through the x402 facilitator:
 
@@ -118,7 +118,7 @@ git clone <repo>
 cd rugnot
 npm install
 cp .env.example .env
-# Fill in OKX API credentials, wallet, and ANTHROPIC_API_KEY for live mode
+# Fill in OKX API credentials, wallet, and GOOGLE_GENERATIVE_AI_API_KEY for live mode
 npm run dev
 # Dashboard: http://localhost:5173
 # Agent API: http://localhost:3001

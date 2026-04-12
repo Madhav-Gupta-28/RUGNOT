@@ -1,7 +1,5 @@
 import crypto from 'node:crypto';
 
-import { OKXDexClient } from '@okx-dex/okx-dex-sdk';
-import { createEVMWallet } from '@okx-dex/okx-dex-sdk/dist/core/evm-wallet.js';
 import { ethers } from 'ethers';
 
 import { env } from './config.js';
@@ -20,7 +18,6 @@ export const OKX_AGGREGATOR_BASE_PATH = '/api/v6/dex/aggregator';
 export const OKX_MARKET_BASE_PATH = '/api/v6/dex/market';
 
 // Slippage expressed as a percentage (not a decimal). "1" = 1%.
-// The SDK's slippagePercent field uses the same scale.
 export const DEFAULT_SLIPPAGE = '1';
 
 export const XLAYER_TOKENS = {
@@ -89,7 +86,6 @@ export interface CallOkxApiOptions<T> {
 }
 
 let provider: ethers.JsonRpcProvider | null = null;
-let dexClient: OKXDexClient | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -180,27 +176,6 @@ export function getSigner(): ethers.Wallet | null {
     console.error('[X Layer] Invalid PRIVATE_KEY:', error);
     return null;
   }
-}
-
-export function getDexClient(): OKXDexClient | null {
-  if (!hasLiveCredentials() || !env.privateKey) {
-    return null;
-  }
-
-  if (!dexClient) {
-    const wallet = createEVMWallet(env.privateKey, getProvider() as unknown as Parameters<typeof createEVMWallet>[1]);
-    dexClient = new OKXDexClient({
-      apiKey: env.okxApiKey,
-      secretKey: env.okxSecretKey,
-      apiPassphrase: env.okxPassphrase,
-      projectId: env.okxProjectId,
-      evm: { wallet },
-      timeout: 15_000,
-      maxRetries: 2,
-    });
-  }
-
-  return dexClient;
 }
 
 // The `onchainos` CLI used to be the fallback path for holders / smart-money

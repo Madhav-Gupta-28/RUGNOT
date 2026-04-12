@@ -232,14 +232,22 @@ export async function vetToken(
   }
 
   const avg = checks.reduce((sum, check) => sum + check.score, 0) / checks.length;
-  const hasDanger = checks.some((check) => check.score === 0);
-  const level: VerdictLevel = hasDanger ? 'DANGER' : avg < 50 ? 'CAUTION' : 'GO';
+  const roundedScore = Math.round(avg);
+  const hasBlockingDanger = checks.some((check) => check.score === 0 || (!check.passed && check.score < 30));
+  const hasFailedLayer = checks.some((check) => !check.passed);
+  const level: VerdictLevel = hasBlockingDanger
+    ? 'DANGER'
+    : roundedScore >= 70 && !hasFailedLayer
+      ? 'GO'
+      : roundedScore >= 30
+        ? 'CAUTION'
+        : 'DANGER';
 
   return {
     tokenAddress,
     chain: 'xlayer',
     level,
-    score: Math.round(hasDanger ? Math.min(avg, 20) : avg),
+    score: hasBlockingDanger ? Math.round(Math.min(avg, 20)) : roundedScore,
     checks,
     timestamp: Date.now(),
     executionTimeMs: Date.now() - start,

@@ -65,22 +65,22 @@ export function LiveFeed() {
   const visibleEvents = events.slice(0, 30);
 
   return (
-    <section id="live-feed" className="terminal-panel rounded-xl p-5">
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-4">
+    <section id="live-feed" className="terminal-panel rounded-md p-6">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-4">
         <div>
-          <div className="font-mono text-xs uppercase text-secondary">SECURITY BUS</div>
+          <div className="font-mono text-[10px] tracking-widest uppercase text-secondary">SECURITY BUS</div>
           <h2 className="mt-2 font-sans text-2xl font-bold text-primary">Live Activity Stream</h2>
           <p className="mt-1 font-sans text-sm text-secondary">Guardian verdicts, trades, exits, and paid security checks.</p>
         </div>
-        <span className={`rounded border px-3 py-1 font-mono text-xs ${visibleEvents.length > 0 ? 'border-accent-safe/30 text-accent-safe' : 'border-border text-secondary'}`}>
+        <span className={`rounded border px-3 py-1 font-mono text-[10px] tracking-widest uppercase ${visibleEvents.length > 0 ? 'border-accent-safe/30 text-accent-safe bg-accent-safe/5' : 'border-border text-secondary'}`}>
           {visibleEvents.length > 0 ? 'STREAMING' : 'AWAITING EVENTS'}
         </span>
       </div>
 
       {visibleEvents.length === 0 ? (
-        <div className="overflow-hidden rounded-xl border border-dashed border-border bg-bg/50">
+        <div className="overflow-hidden rounded border border-dashed border-border bg-bg/50">
           {placeholderRows.map(([time, label, text, chain]) => (
-            <div key={label} className="terminal-row grid grid-cols-[4.5rem_5.75rem_1fr] gap-3 px-3 py-4 font-mono text-xs sm:grid-cols-[5rem_7rem_1fr_auto] sm:px-4">
+            <div key={label} className="border-b border-border last:border-0 grid grid-cols-[4.5rem_5.75rem_1fr] gap-3 px-3 py-4 font-mono text-xs sm:grid-cols-[5rem_7rem_1fr_auto] sm:px-4">
               <span className="text-secondary">{time}</span>
               <span className="rounded border border-border px-2 py-0.5 text-center text-secondary">{label}</span>
               <span className="min-w-0 truncate text-secondary">{text}</span>
@@ -89,24 +89,39 @@ export function LiveFeed() {
           ))}
         </div>
       ) : (
-        <div className="max-h-[38rem] overflow-y-auto rounded-xl border border-border bg-bg/40">
-          {visibleEvents.map((event, index) => (
-            <div
-              key={`${event.type}-${event.timestamp}-${index}`}
-              className="terminal-row grid grid-cols-[4.75rem_5.75rem_1fr] gap-3 px-3 py-4 animate-slide-in sm:grid-cols-[5.5rem_7rem_1fr_auto] sm:px-4"
-            >
-              <time className="font-mono text-xs text-secondary">
-                {timeAgo(event.timestamp)}
-              </time>
-              <span className={`rounded border px-2 py-0.5 text-center font-mono text-xs ${getEventTone(event)}`}>
-                {getEventLabel(event)}
-              </span>
-              <p className={`min-w-0 truncate font-mono text-sm ${getEventTextTone(event)}`}>
-                {describeEvent(event)}
-              </p>
-              <span className="hidden font-mono text-xs text-accent-safe sm:block">X LAYER</span>
-            </div>
-          ))}
+        <div className="max-h-[38rem] overflow-y-auto rounded border border-[#1a1a1a] bg-[#050505]">
+          {visibleEvents.map((event, index) => {
+            let txUrl: string | undefined;
+            if (event.type === 'trade' && typeof event.data === 'object' && event.data !== null && 'txHash' in event.data) {
+              const hash = event.data.txHash as string;
+              if (hash) txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
+            }
+
+            return (
+              <div
+                key={`${event.type}-${event.timestamp}-${index}`}
+                className="border-b border-border last:border-0 hover:bg-[#0a0a0a] transition-colors grid grid-cols-[4.75rem_5.75rem_1fr] items-center gap-3 px-3 py-2.5 animate-slide-in sm:grid-cols-[5.5rem_7rem_1fr_auto] sm:px-4"
+              >
+                <time className="font-mono text-[10px] text-secondary">
+                  {timeAgo(event.timestamp)}
+                </time>
+                <span className={`rounded border px-2 py-0.5 text-center font-mono text-[9px] font-bold tracking-wider ${getEventTone(event)}`}>
+                  {getEventLabel(event)}
+                </span>
+                {txUrl ? (
+                  <a href={txUrl} target="_blank" rel="noreferrer" className={`min-w-0 truncate font-mono text-xs hover:underline cursor-pointer flex items-center gap-1.5 ${getEventTextTone(event)}`}>
+                    {describeEvent(event)}
+                    <span className="opacity-50 text-[10px]">↗</span>
+                  </a>
+                ) : (
+                  <p className={`min-w-0 truncate font-mono text-xs ${getEventTextTone(event)}`}>
+                    {describeEvent(event)}
+                  </p>
+                )}
+                <span className="hidden font-mono text-[9px] tracking-widest text-accent-safe sm:block pt-[1px]">X LAYER</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>

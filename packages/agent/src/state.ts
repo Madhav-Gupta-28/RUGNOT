@@ -21,6 +21,7 @@ export class StateStore {
   constructor(config: AgentConfig, walletAddress: string, persistPath = '') {
     this.persistPath = persistPath;
     const persisted = this.loadPersistedState();
+    const persistedConfig = persisted?.config;
     const base: AgentState = {
       isRunning: false,
       isPaused: persisted?.isPaused ?? false,
@@ -37,7 +38,11 @@ export class StateStore {
       walletAddress,
       config: {
         ...config,
-        ...(persisted?.config ?? {}),
+        riskTolerance: persistedConfig?.riskTolerance ?? config.riskTolerance,
+        scanIntervalMs: persistedConfig?.scanIntervalMs ?? config.scanIntervalMs,
+        monitorIntervalMs: persistedConfig?.monitorIntervalMs ?? config.monitorIntervalMs,
+        maxPositionSizeUsdt: persistedConfig?.maxPositionSizeUsdt ?? config.maxPositionSizeUsdt,
+        maxPortfolioSizeUsdt: persistedConfig?.maxPortfolioSizeUsdt ?? config.maxPortfolioSizeUsdt,
       },
     };
   }

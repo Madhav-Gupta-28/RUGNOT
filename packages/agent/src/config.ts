@@ -75,6 +75,20 @@ function parseRiskTolerance(raw: string | undefined): RiskTolerance {
   return 'moderate';
 }
 
+function parseMcpTransport(raw: string | undefined): McpTransport {
+  const value = (raw || 'stdio').toLowerCase();
+  if (value === 'stdio' || value === 'http') return value;
+  return 'disabled';
+}
+
+function parseBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') {
+    return fallback;
+  }
+  return raw.toLowerCase() !== 'false';
+}
+
 export interface AppEnv {
   okxApiKey: string;
   okxSecretKey: string;
@@ -106,6 +120,14 @@ export const agentConfig: AgentConfig = {
   monitorIntervalMs: parseNumber('MONITOR_INTERVAL_MS', 120_000),
   maxPositionSizeUsdt: parseNumber('MAX_POSITION_SIZE_USDT', 50),
   maxPortfolioSizeUsdt: parseNumber('MAX_PORTFOLIO_SIZE_USDT', 500),
+  chainId: process.env.AGENT_CHAIN_ID || '196',
+  rpcUrl: readEnv('RPC_URL', 'https://rpc.xlayer.tech'),
+  x402Enabled: parseBooleanEnv('X402_ENABLED', true),
+  x402Network: readEnv('X402_NETWORK', 'base'),
+  x402PricePerCheck: parseNumber('X402_PRICE_PER_CHECK', 0.005),
+  aiProvider: process.env.GOOGLE_GENERATIVE_AI_API_KEY ? 'gemini' : 'local-fallback',
+  aiModel: readEnv('GOOGLE_MODEL', 'gemini-2.5-flash'),
+  mcpTransport: parseMcpTransport(process.env.MCP_TRANSPORT),
 };
 
 validateOkxEnv();
@@ -120,7 +142,7 @@ export const env: AppEnv = {
   agentChainId: process.env.AGENT_CHAIN_ID || '196',
   rpcUrl: readEnv('RPC_URL', 'https://rpc.xlayer.tech'),
   x402PricePerCheck: parseNumber('X402_PRICE_PER_CHECK', 0.005),
-  x402Enabled: (process.env.X402_ENABLED || 'true').toLowerCase() !== 'false',
+  x402Enabled: parseBooleanEnv('X402_ENABLED', true),
   x402PayTo: readEnv('X402_PAY_TO', readEnv('AGENT_WALLET_ADDRESS', '0x0000000000000000000000000000000000000196')),
   x402Network: readEnv('X402_NETWORK', 'base'),
   x402FacilitatorUrl: readEnv('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
@@ -130,11 +152,7 @@ export const env: AppEnv = {
   adminToken: readEnv('ADMIN_TOKEN'),
   port: parseNumber('PORT', 3001),
   enableMcp: (process.env.ENABLE_MCP || 'false').toLowerCase() === 'true',
-  mcpTransport: ((): McpTransport => {
-    const value = (process.env.MCP_TRANSPORT || 'stdio').toLowerCase();
-    if (value === 'stdio' || value === 'http') return value;
-    return 'disabled';
-  })(),
+  mcpTransport: parseMcpTransport(process.env.MCP_TRANSPORT),
   okxCredentialsConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE),
   liveSwapConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE && process.env.PRIVATE_KEY),
 };

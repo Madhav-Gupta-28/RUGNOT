@@ -21,6 +21,14 @@ const initialState: AgentState = {
     monitorIntervalMs: 120_000,
     maxPositionSizeUsdt: 50,
     maxPortfolioSizeUsdt: 500,
+    chainId: '196',
+    rpcUrl: 'https://rpc.xlayer.tech',
+    x402Enabled: false,
+    x402Network: 'base',
+    x402PricePerCheck: 0.005,
+    aiProvider: 'local-fallback',
+    aiModel: 'gemini-2.5-flash',
+    mcpTransport: 'http',
   },
 };
 

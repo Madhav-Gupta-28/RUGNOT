@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { generateText, tool } from 'ai';
+import { generateText, stepCountIs, tool, type ToolSet } from 'ai';
 import { google } from '@ai-sdk/google';
 import { z } from 'zod';
 
@@ -7,6 +6,18 @@ import { env } from './config.js';
 import { vetToken } from './guardian.js';
 import { runScoutCycle } from './scout.js';
 import type { StateStore } from './state.js';
+import type { Verdict, VettedOpportunity } from './types.js';
+
+type PortfolioRiskResult = {
+  walletBalance: number;
+  positionsChecked: number;
+  verdicts: Array<{
+    tokenSymbol: string;
+    tokenAddress: string;
+    pnlPercent: number;
+    verdict: Verdict;
+  }>;
+};
 
 function fallbackChatReply(state: StateStore, message: string): string {
   const snapshot = state.get();
@@ -47,67 +58,74 @@ function buildSystemPrompt(state: StateStore): string {
   ].join('\n');
 }
 
+function createRugnotTools(state: StateStore) {
+  return {
+    check_token_safety: tool({
+      description: 'Run RUGNOT 5-layer Guardian security analysis for a token on X Layer.',
+      inputSchema: z.object({
+        tokenAddress: z.string().describe('Token contract address on X Layer.'),
+      }),
+      execute: async ({ tokenAddress }): Promise<Verdict> => {
+        const verdict = await vetToken(tokenAddress);
+        state.addVerdict(verdict);
+        return verdict;
+      },
+    }),
+    get_portfolio_risks: tool({
+      description: 'Run Guardian security checks for every open position in the current RUGNOT portfolio.',
+      inputSchema: z.object({}),
+      execute: async (): Promise<PortfolioRiskResult> => {
+        const verdicts: PortfolioRiskResult['verdicts'] = [];
+        for (const position of state.get().positions) {
+          const verdict = await vetToken(position.tokenAddress, 'exit');
+          state.addVerdict(verdict);
+          verdicts.push({
+            tokenSymbol: position.tokenSymbol,
+            tokenAddress: position.tokenAddress,
+            pnlPercent: position.pnlPercent,
+            verdict,
+          });
+        }
+        return {
+          walletBalance: state.get().walletBalance,
+          positionsChecked: verdicts.length,
+          verdicts,
+        };
+      },
+    }),
+    find_safe_opportunities: tool({
+      description: 'Discover OKX market signals and return opportunities that passed Guardian vetting.',
+      inputSchema: z.object({
+        minScore: z.number().default(70).describe('Minimum Guardian score to include. Defaults to 70.'),
+      }),
+      execute: async ({ minScore }): Promise<VettedOpportunity[]> => {
+        const opportunities = await runScoutCycle(state);
+        return opportunities.filter((opportunity) => opportunity.verdict.score >= minScore);
+      },
+    }),
+  } satisfies ToolSet;
+}
+
 export async function buildChatReply(state: StateStore, message: string): Promise<string> {
   if (!env.googleApiKey) {
     return fallbackChatReply(state, message);
   }
 
   try {
+    const tools = createRugnotTools(state);
     const response = await generateText({
       model: google(env.googleModel),
       system: buildSystemPrompt(state),
       prompt: message,
-      tools: {
-        check_token_safety: tool({
-          description: 'Run RUGNOT 5-layer Guardian security analysis for a token on X Layer.',
-          parameters: z.object({
-            tokenAddress: z.string().describe('Token contract address on X Layer.'),
-          }),
-          execute: async ({ tokenAddress }: { tokenAddress: string }) => {
-            const verdict = await vetToken(tokenAddress);
-            state.addVerdict(verdict);
-            return verdict;
-          },
-        }),
-        get_portfolio_risks: tool({
-          description: 'Run Guardian security checks for every open position in the current RUGNOT portfolio.',
-          parameters: z.object({}),
-          execute: async (_args: {}) => {
-            const verdicts = [];
-            for (const position of state.get().positions) {
-              const verdict = await vetToken(position.tokenAddress, 'exit');
-              state.addVerdict(verdict);
-              verdicts.push({
-                tokenSymbol: position.tokenSymbol,
-                tokenAddress: position.tokenAddress,
-                pnlPercent: position.pnlPercent,
-                verdict,
-              });
-            }
-            return {
-              walletBalance: state.get().walletBalance,
-              positionsChecked: verdicts.length,
-              verdicts,
-            };
-          },
-        }),
-        find_safe_opportunities: tool({
-          description: 'Discover OKX market signals and return opportunities that passed Guardian vetting.',
-          parameters: z.object({
-            minScore: z.number().default(70).describe('Minimum Guardian score to include. Defaults to 70.'),
-          }),
-          execute: async ({ minScore }: { minScore: number }) => {
-            const opportunities = await runScoutCycle(state);
-            return opportunities.filter((opportunity) => opportunity.verdict.score >= minScore);
-          },
-        }),
-      },
+      tools,
+      stopWhen: stepCountIs(3),
+      maxRetries: 1,
     });
 
     if (response.text) {
       return response.text;
     }
-    
+
     if (response.toolResults && response.toolResults.length > 0) {
       return `RUGNOT executed tools successfully:\n${JSON.stringify(response.toolResults, null, 2)}`;
     }

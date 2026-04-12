@@ -25,78 +25,53 @@ export function PortfolioPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-12 mt-4">
-      <section className="mb-12">
-        <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-3">PORTFOLIO TERMINAL</div>
-        <h1 className="font-sans text-4xl lg:text-5xl font-bold text-primary mb-4 tracking-tighter">GUARDIAN WALLET VAULT</h1>
-        <p className="font-sans text-lg text-secondary/80 max-w-3xl leading-relaxed">
-          Track active positions, mark-to-market PnL, and agent-managed capital exposure protected by Guardian checks and Sentinel monitoring.
-        </p>
-      </section>
-
-      <section className="grid gap-6 sm:grid-cols-3">
-        <div className="border border-border bg-bg/40 rounded-lg p-6 flex flex-col justify-between h-[150px] transition hover:border-accent-safe/40 group">
-          <div className="flex items-center gap-4">
-             <div className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-secondary group-hover:border-accent-safe/50 group-hover:text-accent-safe transition">↓</div>
-             <div className="font-mono text-[11px] tracking-widest uppercase text-secondary group-hover:text-primary transition">MAX EXPOSURE</div>
-          </div>
-          <div>
-            <div className="font-sans text-4xl lg:text-5xl font-light text-primary tracking-tight">{formatMoney(portfolioValue)}</div>
-          </div>
+      <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-border pb-6">
+        <div>
+           <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">LIVE EXPOSURE</div>
+           <h1 className="font-sans text-3xl font-bold text-primary tracking-tight">Active Portfolio</h1>
         </div>
-        
-        <div className="border border-border bg-bg/40 rounded-lg p-6 flex flex-col justify-between h-[150px] transition hover:border-accent-safe/40 group">
-          <div className="flex items-center gap-4">
-             <div className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-secondary group-hover:border-accent-safe/50 group-hover:text-accent-safe transition">~</div>
-             <div className="font-mono text-[11px] tracking-widest uppercase text-secondary group-hover:text-primary transition">POSITIONS PNL</div>
-          </div>
-          <div>
-            <div className="font-sans text-4xl lg:text-5xl font-light text-primary tracking-tight">+0.00%</div>
-          </div>
+        <div className="flex gap-8 sm:gap-12 text-left md:text-right">
+           <div>
+             <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">TOTAL VALUE</div>
+             <div className="font-mono text-2xl text-primary">{formatMoney(portfolioValue)}</div>
+           </div>
+           <div>
+             <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">NETWORK PNL</div>
+             <div className="font-mono text-2xl text-accent-safe">+0.00%</div>
+           </div>
+           <div>
+             <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">TRACKED</div>
+             <div className="font-mono text-2xl text-primary">{positions.length}</div>
+           </div>
         </div>
+      </div>
 
-        <div className="border border-border bg-bg/40 rounded-lg p-6 flex flex-col justify-between h-[150px] transition hover:border-accent-safe/40 group">
-          <div className="flex items-center gap-4">
-             <div className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-secondary group-hover:border-accent-safe/50 group-hover:text-accent-safe transition">⛨</div>
-             <div className="font-mono text-[11px] tracking-widest uppercase text-secondary group-hover:text-primary transition">ACTIVE POSITIONS</div>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <div className="font-sans text-4xl lg:text-5xl font-light text-primary tracking-tight">{positions.length}</div>
-            <div className="font-mono text-[10px] text-secondary/60 uppercase">Tracked</div>
-          </div>
-        </div>
-      </section>
-
-      <div className="border border-border rounded-xl bg-bg/40 overflow-hidden shadow-lg mt-12 mb-12">
-        <div className="border-b border-border p-6 flex items-center justify-between bg-bg/80">
-          <h2 className="font-sans text-xl font-bold text-primary tracking-tight">SECURE POSITIONS</h2>
+      <div className="terminal-panel rounded-md mb-12">
+        <div className="border-b border-[#1a1a1a] p-4 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <h2 className="font-sans text-lg font-bold text-primary tracking-tight">Secure Positions</h2>
           <div className="flex gap-3">
             <button
               onClick={handleSellAll}
               disabled={isSellingAll || positions.length === 0}
-              className="rounded border border-accent-danger/30 bg-accent-danger/10 px-6 py-3 font-mono text-[11px] tracking-widest font-bold text-accent-danger hover:bg-accent-danger hover:text-bg hover:shadow-[0_0_15px_rgba(255,50,50,0.3)] transition disabled:opacity-50"
+              className="rounded border border-accent-danger/30 bg-accent-danger/10 px-4 py-2 font-mono text-[10px] tracking-widest uppercase text-accent-danger hover:bg-accent-danger hover:text-bg transition disabled:opacity-50"
             >
               {isSellingAll ? 'SELLING ALL...' : 'EMERGENCY SELL ALL'}
             </button>
-            <button className="rounded border border-accent-safe/30 bg-accent-safe/10 px-6 py-3 font-mono text-[11px] tracking-widest font-bold text-accent-safe hover:bg-accent-safe hover:text-bg hover:shadow-[0_0_15px_rgba(188,255,47,0.3)] transition">
+            <button className="rounded border border-[#333333] hover:border-accent-safe bg-transparent px-4 py-2 font-mono text-[10px] tracking-widest uppercase text-secondary hover:text-accent-safe transition">
               + NEW PROPOSAL
             </button>
           </div>
         </div>
         
         {!walletAddress ? (
-          <div className="p-32 flex flex-col items-center justify-center text-center">
-            <svg className="w-16 h-16 text-secondary/40 mb-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
-               <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
-               <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
-               <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
-            </svg>
-            <h3 className="font-sans text-2xl font-bold text-primary mb-3">Wallet Disconnected</h3>
-            <p className="font-sans text-base text-secondary/80 max-w-md mx-auto">Connect your wallet to view your active secure positions and tracked assets.</p>
+          <div className="p-16 md:p-24 flex flex-col items-center justify-center text-center">
+            <h3 className="font-sans text-lg font-bold text-primary mb-2">Wallet Disconnected</h3>
+            <p className="font-sans text-sm text-secondary max-w-md mx-auto">Connect your wallet to view your active secure positions and tracked assets.</p>
           </div>
         ) : positions.length === 0 ? (
-          <div className="p-32 flex flex-col items-center justify-center text-center">
-            <h3 className="font-sans text-2xl font-bold text-primary mb-3">No Active Exposure</h3>
-            <p className="font-sans text-base text-secondary/80">The agent is currently scanning for secure opportunities.</p>
+          <div className="p-16 md:p-24 flex flex-col items-center justify-center text-center">
+            <h3 className="font-sans text-lg font-bold text-primary mb-2">No Active Exposure</h3>
+            <p className="font-sans text-sm text-secondary">The agent is currently scanning for secure opportunities.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">

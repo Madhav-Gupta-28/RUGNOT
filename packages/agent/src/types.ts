@@ -92,6 +92,14 @@ export interface AgentConfig {
   monitorIntervalMs: number;
   maxPositionSizeUsdt: number;
   maxPortfolioSizeUsdt: number;
+  chainId: string;
+  rpcUrl: string;
+  x402Enabled: boolean;
+  x402Network: string;
+  x402PricePerCheck: number;
+  aiProvider: 'gemini' | 'local-fallback';
+  aiModel: string;
+  mcpTransport: 'stdio' | 'http' | 'disabled';
 }
 
 export interface WsEvent {

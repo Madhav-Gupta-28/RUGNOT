@@ -7,22 +7,21 @@
   "scripts": {
     "dev": "npm run build && node --watch dist/index.js",
     "mcp": "npm run build && node dist/mcp-stdio.js",
+    "x402:buy": "tsx scripts/buy-x402.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/google": "latest",
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "@okx-dex/okx-dex-sdk": "^1.0.18",
     "ai": "latest",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "ethers": "^6.16.0",
     "express": "^4.21.2",
     "uuid": "^11.1.0",
+    "viem": "^2.47.12",
     "ws": "^8.18.0",
-    "x402-client": "latest",
-    "x402-express": "^1.1.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
