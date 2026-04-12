@@ -45,7 +45,7 @@ export interface TradeExecution {
   tokenSymbol: string;
   amountIn: number;
   amountOut: number;
-  txHash: string;
+  txHash?: string;
   status: 'pending' | 'confirmed' | 'failed';
   verdict?: Verdict;
   timestamp: number;

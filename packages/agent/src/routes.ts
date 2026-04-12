@@ -233,11 +233,6 @@ interface DemoToken {
 
 // Realistic fake tx hash — 64 hex chars like a real EVM tx
 // ---------------------------------------------------------------------------
-function fakeTxHash(seed: string): string {
-  const base = Buffer.from(`${seed}-${Date.now()}-${Math.random()}`).toString('hex');
-  return `0x${base.repeat(4).slice(0, 64)}`;
-}
-
 function randomAddress(seed: string): string {
   const hex = Buffer.from(`${seed}-${Date.now()}-${Math.random()}`).toString('hex');
   return `0x${hex.padEnd(40, '0').slice(0, 40)}`;
@@ -337,7 +332,7 @@ export function createDemoRouter(state: StateStore): Router {
     setTimeout(() => {
       const amountIn1 = 1;
       const amountOut1 = Math.round((amountIn1 / goToken1.price) * 100) / 100;
-      const txHash1 = fakeTxHash('buy-xpump');
+      const txHash1 = undefined;
 
       const buyTrade1: TradeExecution = {
         id: uuidv4(), type: 'buy',
@@ -369,7 +364,7 @@ export function createDemoRouter(state: StateStore): Router {
     setTimeout(() => {
       const amountIn2 = 1;
       const amountOut2 = Math.round((amountIn2 / goToken2.price) * 100) / 100;
-      const txHash2 = fakeTxHash('buy-layerfi');
+      const txHash2 = undefined;
 
       const buyTrade2: TradeExecution = {
         id: uuidv4(), type: 'buy',
@@ -458,7 +453,7 @@ export function createDemoRouter(state: StateStore): Router {
         ['Liquidity', false, 14, '$50 swap impact: 18.4%'],
         ['Tx Simulation', true, 62, 'Emergency sell simulation passed'],
       ]));
-      const exitTx1 = fakeTxHash('sell-xpump');
+      const exitTx1 = undefined;
       const exitTrade1: TradeExecution = {
         id: uuidv4(), type: 'sell',
         tokenAddress: addr1, tokenSymbol: goToken1.symbol,
@@ -504,7 +499,7 @@ export function createDemoRouter(state: StateStore): Router {
 
     // t=108s — Exit LAYERFI for profit
     setTimeout(() => {
-      const exitTx2 = fakeTxHash('sell-layerfi-profit');
+      const exitTx2 = undefined;
       const exitTrade2: TradeExecution = {
         id: uuidv4(), type: 'sell',
         tokenAddress: addr2, tokenSymbol: goToken2.symbol,
