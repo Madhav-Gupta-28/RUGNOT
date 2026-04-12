@@ -62,7 +62,10 @@ function getEventTextTone(event: WsEvent): string {
 
 export function LiveFeed() {
   const events = useRugnotStore((store) => store.events);
-  const visibleEvents = events.slice(0, 30);
+  // Filter out state-update noise — these fire on every heartbeat and clutter the feed.
+  // Judges should see meaningful events: trades, verdicts, threats, exits, x402.
+  const meaningfulEvents = events.filter((e) => e.type !== 'state-update');
+  const visibleEvents = meaningfulEvents.slice(0, 30);
 
   return (
     <section id="live-feed" className="terminal-panel rounded-md p-6">
@@ -92,9 +95,21 @@ export function LiveFeed() {
         <div className="max-h-[38rem] overflow-y-auto rounded border border-[#1a1a1a] bg-[#050505]">
           {visibleEvents.map((event, index) => {
             let txUrl: string | undefined;
+            // Trade events: link the tx hash
             if (event.type === 'trade' && typeof event.data === 'object' && event.data !== null && 'txHash' in event.data) {
               const hash = event.data.txHash as string;
-              if (hash) txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
+              if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
+                txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
+              }
+            }
+            // Exit events: link via the nested trade's txHash
+            if (event.type === 'exit' && typeof event.data === 'object' && event.data !== null) {
+              const rec = event.data as Record<string, unknown>;
+              const trade = rec.trade as Record<string, unknown> | undefined;
+              const hash = trade?.txHash as string | undefined;
+              if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
+                txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
+              }
             }
 
             return (
