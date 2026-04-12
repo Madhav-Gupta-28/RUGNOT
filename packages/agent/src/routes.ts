@@ -292,136 +292,321 @@ function makeVerdict(tokenAddress: string, level: VerdictLevel, score: number, c
   };
 }
 
+// ---------------------------------------------------------------------------
+// Realistic fake tx hash — 64 hex chars like a real EVM tx
+// ---------------------------------------------------------------------------
+function fakeTxHash(seed: string): string {
+  const base = Buffer.from(`${seed}-${Date.now()}-${Math.random()}`).toString('hex');
+  return `0x${base.repeat(4).slice(0, 64)}`;
+}
+
+function randomAddress(seed: string): string {
+  const hex = Buffer.from(`${seed}-${Date.now()}-${Math.random()}`).toString('hex');
+  return `0x${hex.padEnd(40, '0').slice(0, 40)}`;
+}
+
+function makeChecks(rows: Array<[string, boolean, number, string]>): SecurityCheck[] {
+  return rows.map(([name, passed, score, reason]) => ({ name, passed, score, reason }));
+}
+
+function makeVerdict(tokenAddress: string, level: VerdictLevel, score: number, checks: SecurityCheck[]): Verdict {
+  return {
+    tokenAddress,
+    chain: 'xlayer',
+    level,
+    score,
+    checks,
+    timestamp: Date.now(),
+    executionTimeMs: 420 + Math.floor(Math.random() * 900),
+  };
+}
+
+const demoTokens: DemoToken[] = [
+  {
+    symbol: 'XPUMP',
+    level: 'GO' as const,
+    score: 82,
+    price: 0.037,
+    checks: [
+      ['Contract Safety', true, 88, 'No honeypot, tax: 0%'],
+      ['Holder Analysis', true, 76, 'Top 10 holders: 24.1%'],
+      ['Smart Money', true, 80, 'Net smart-money inflow: +$1,240'],
+      ['Liquidity', true, 84, '$50 swap impact: 1.6%'],
+      ['Tx Simulation', true, 90, 'Buy + sell simulation passed'],
+    ],
+  },
+  {
+    symbol: 'LAYERFI',
+    level: 'GO' as const,
+    score: 76,
+    price: 0.0021,
+    checks: [
+      ['Contract Safety', true, 82, 'Verified contract, renounced ownership'],
+      ['Holder Analysis', true, 71, 'Top 10 holders: 31.4%'],
+      ['Smart Money', true, 74, 'KOL buying detected'],
+      ['Liquidity', true, 78, '$50 swap impact: 2.1%'],
+      ['Tx Simulation', true, 76, 'Simulation passed'],
+    ],
+  },
+  {
+    symbol: 'LAYERDOG',
+    level: 'CAUTION' as const,
+    score: 45,
+    price: 0.0048,
+    checks: [
+      ['Contract Safety', true, 62, 'Proxy contract detected'],
+      ['Holder Analysis', false, 34, 'Top 10 holders: 66.0%'],
+      ['Smart Money', false, 28, 'Smart money SELLING'],
+      ['Liquidity', true, 55, '$50 swap impact: 4.5%'],
+      ['Tx Simulation', true, 48, 'Simulation passed with warnings'],
+    ],
+  },
+  {
+    symbol: 'OKXAI',
+    level: 'DANGER' as const,
+    score: 8,
+    price: 1.42,
+    checks: [
+      ['Contract Safety', false, 0, 'HONEYPOT DETECTED — sell disabled'],
+      ['Holder Analysis', false, 18, 'Top 10 holders: 82.0%'],
+      ['Smart Money', false, 12, 'Smart money SELLING'],
+      ['Liquidity', false, 10, '$50 swap impact: 14.2%'],
+      ['Tx Simulation', false, 0, 'Simulation FAILED'],
+    ],
+  },
+];
+
 export function createDemoRouter(state: StateStore): Router {
   const router = Router();
 
   router.post('/api/demo/trigger', (_req, res) => {
     const startedAt = Date.now();
-    const tokenAddresses = demoTokens.map((token) => randomAddress(token.symbol));
-    const goToken = demoTokens[0];
-    const goAddress = tokenAddresses[0];
-    const amountIn = 50;
-    const amountOut = Math.round((amountIn / goToken.price) * 100) / 100;
+    const TOTAL_DEMO_MS = 120_000; // 2 minutes
 
-    demoTokens.forEach((token, index) => {
-      const verdict = makeVerdict(tokenAddresses[index], token.level, token.score, makeChecks(token.checks));
-      state.addVerdict(verdict);
+    // Generate addresses
+    const tokenAddresses = demoTokens.map((t) => randomAddress(t.symbol));
+    const [goToken1, goToken2, cautionToken, dangerToken] = demoTokens;
+    const [addr1, addr2, addr3, addr4] = tokenAddresses;
+
+    // t=0 — Scout scans 4 tokens, Guardian runs verdicts
+    demoTokens.forEach((token, i) => {
+      setTimeout(() => {
+        state.addVerdict(makeVerdict(tokenAddresses[i], token.level, token.score, makeChecks(token.checks)));
+      }, i * 800); // stagger so feed shows them arriving one by one
     });
 
-    const buyTrade: TradeExecution = {
-      id: uuidv4(),
-      type: 'buy',
-      tokenAddress: goAddress,
-      tokenSymbol: goToken.symbol,
-      amountIn,
-      amountOut,
-      txHash: randomAddress('tx-buy'),
-      status: 'confirmed',
-      verdict: state.get().recentVerdicts.find((verdict) => verdict.tokenAddress === goAddress),
-      timestamp: Date.now(),
-    };
-
-    const position: Position = {
-      tokenAddress: goAddress,
-      tokenSymbol: goToken.symbol,
-      amount: amountOut,
-      entryPrice: goToken.price,
-      currentPrice: goToken.price * 1.08,
-      pnlPercent: 8,
-      pnlUsd: 4,
-      lastSecurityCheck: Date.now(),
-      lastVerdictLevel: 'GO',
-    };
-
-    state.upsertPosition(position);
-    state.setWalletBalance(Math.max(0, state.get().walletBalance - amountIn));
-    state.addTrade(buyTrade);
-
-    state.addX402Transaction({
-      id: uuidv4(),
-      direction: 'earned',
-      amount: 0.005,
-      service: 'security-check',
-      timestamp: Date.now(),
-    });
-    state.addX402Transaction({
-      id: uuidv4(),
-      direction: 'spent',
-      amount: 0.002,
-      service: 'premium-signal-data',
-      timestamp: Date.now(),
-    });
-
+    // t=3s — Buy XPUMP (GO, score 82)
     setTimeout(() => {
-      const threat: ThreatAlert = {
-        id: uuidv4(),
-        tokenAddress: goAddress,
-        tokenSymbol: goToken.symbol,
-        threatType: 'whale-dump',
-        severity: 'critical',
-        description: 'Whale wallet dumped 18% of circulating supply into thin liquidity',
-        action: 'alert-only',
+      const amountIn1 = 1;
+      const amountOut1 = Math.round((amountIn1 / goToken1.price) * 100) / 100;
+      const txHash1 = fakeTxHash('buy-xpump');
+
+      const buyTrade1: TradeExecution = {
+        id: uuidv4(), type: 'buy',
+        tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        amountIn: amountIn1, amountOut: amountOut1,
+        txHash: txHash1, status: 'confirmed',
+        verdict: state.get().recentVerdicts.find((v) => v.tokenAddress === addr1),
         timestamp: Date.now(),
       };
-      state.addThreat(threat);
-    }, 5000);
+      const pos1: Position = {
+        tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        amount: amountOut1,
+        entryPrice: goToken1.price,
+        currentPrice: goToken1.price * 1.04, // already up 4%
+        pnlPercent: 4, pnlUsd: amountIn1 * 0.04,
+        lastSecurityCheck: Date.now(), lastVerdictLevel: 'GO',
+      };
+      state.upsertPosition(pos1);
+      state.setWalletBalance(Math.max(0, state.get().walletBalance - amountIn1));
+      state.addTrade(buyTrade1);
 
+      state.addX402Transaction({
+        id: uuidv4(), direction: 'earned', amount: 0.005,
+        service: 'security-check:base', timestamp: Date.now(),
+      });
+    }, 3_000);
+
+    // t=7s — Buy LAYERFI (GO, score 76)
     setTimeout(() => {
-      const exitTrade: TradeExecution = {
-        id: uuidv4(),
-        type: 'sell',
-        tokenAddress: goAddress,
-        tokenSymbol: goToken.symbol,
-        amountIn: amountOut,
-        amountOut: 54,
-        txHash: randomAddress('tx-exit'),
-        status: 'confirmed',
-        verdict: makeVerdict(goAddress, 'DANGER', 18, makeChecks([
-          ['Contract Safety', true, 74, 'Contract unchanged'],
-          ['Holder Analysis', false, 26, 'Whale concentration spiking'],
-          ['Smart Money', false, 8, 'Smart money SELLING'],
-          ['Liquidity', false, 16, '$100 swap impact: 12.40%'],
-          ['Tx Simulation', true, 66, 'Emergency sell simulation passed'],
-        ])),
+      const amountIn2 = 1;
+      const amountOut2 = Math.round((amountIn2 / goToken2.price) * 100) / 100;
+      const txHash2 = fakeTxHash('buy-layerfi');
+
+      const buyTrade2: TradeExecution = {
+        id: uuidv4(), type: 'buy',
+        tokenAddress: addr2, tokenSymbol: goToken2.symbol,
+        amountIn: amountIn2, amountOut: amountOut2,
+        txHash: txHash2, status: 'confirmed',
+        verdict: state.get().recentVerdicts.find((v) => v.tokenAddress === addr2),
         timestamp: Date.now(),
       };
-      const exitAlert: ThreatAlert = {
-        id: uuidv4(),
-        tokenAddress: goAddress,
-        tokenSymbol: goToken.symbol,
-        threatType: 'whale-dump',
-        severity: 'critical',
-        description: 'Auto-exit fired after whale dump confirmation',
-        action: 'auto-exit',
-        exitTxHash: exitTrade.txHash,
-        timestamp: Date.now(),
+      const pos2: Position = {
+        tokenAddress: addr2, tokenSymbol: goToken2.symbol,
+        amount: amountOut2,
+        entryPrice: goToken2.price,
+        currentPrice: goToken2.price * 1.06,
+        pnlPercent: 6, pnlUsd: amountIn2 * 0.06,
+        lastSecurityCheck: Date.now(), lastVerdictLevel: 'GO',
+      };
+      state.upsertPosition(pos2);
+      state.setWalletBalance(Math.max(0, state.get().walletBalance - amountIn2));
+      state.addTrade(buyTrade2);
+
+      state.addX402Transaction({
+        id: uuidv4(), direction: 'earned', amount: 0.005,
+        service: 'security-check:base', timestamp: Date.now(),
+      });
+    }, 7_000);
+
+    // t=20s — Sentinel re-checks XPUMP, price drifts up +12%
+    setTimeout(() => {
+      state.upsertPosition({
+        tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        amount: Math.round((1 / goToken1.price) * 100) / 100,
+        entryPrice: goToken1.price,
+        currentPrice: goToken1.price * 1.12,
+        pnlPercent: 12, pnlUsd: 1 * 0.12,
+        lastSecurityCheck: Date.now(), lastVerdictLevel: 'GO',
+      });
+      state.addVerdict(makeVerdict(addr1, 'GO', 79, makeChecks([
+        ['Contract Safety', true, 88, 'Contract unchanged'],
+        ['Holder Analysis', true, 72, 'Holder distribution healthy'],
+        ['Smart Money', true, 77, 'Smart money still holding'],
+        ['Liquidity', true, 80, '$50 swap impact: 1.8%'],
+        ['Tx Simulation', true, 88, 'Re-check simulation passed'],
+      ])));
+    }, 20_000);
+
+    // t=35s — Sentinel re-checks LAYERFI, price up +9%
+    setTimeout(() => {
+      state.upsertPosition({
+        tokenAddress: addr2, tokenSymbol: goToken2.symbol,
+        amount: Math.round((1 / goToken2.price) * 100) / 100,
+        entryPrice: goToken2.price,
+        currentPrice: goToken2.price * 1.09,
+        pnlPercent: 9, pnlUsd: 1 * 0.09,
+        lastSecurityCheck: Date.now(), lastVerdictLevel: 'GO',
+      });
+    }, 35_000);
+
+    // t=55s — XPUMP threat: whale dump detected
+    setTimeout(() => {
+      const threat1: ThreatAlert = {
+        id: uuidv4(), tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        threatType: 'whale-dump', severity: 'critical',
+        description: 'Whale wallet sold 18% of circulating supply — liquidity dropping fast',
+        action: 'alert-only', timestamp: Date.now(),
+      };
+      state.addThreat(threat1);
+
+      // Price nukes
+      state.upsertPosition({
+        tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        amount: Math.round((1 / goToken1.price) * 100) / 100,
+        entryPrice: goToken1.price,
+        currentPrice: goToken1.price * 0.72, // -28%
+        pnlPercent: -28, pnlUsd: -0.28,
+        lastSecurityCheck: Date.now(), lastVerdictLevel: 'CAUTION',
+      });
+    }, 55_000);
+
+    // t=70s — Sentinel triggers auto-exit on XPUMP (DANGER verdict)
+    setTimeout(() => {
+      const exitVerdict = makeVerdict(addr1, 'DANGER', 17, makeChecks([
+        ['Contract Safety', true, 74, 'Contract unchanged'],
+        ['Holder Analysis', false, 22, 'Whale concentration 71% — extreme'],
+        ['Smart Money', false, 6, 'Smart money fully exited'],
+        ['Liquidity', false, 14, '$50 swap impact: 18.4%'],
+        ['Tx Simulation', true, 62, 'Emergency sell simulation passed'],
+      ]));
+      const exitTx1 = fakeTxHash('sell-xpump');
+      const exitTrade1: TradeExecution = {
+        id: uuidv4(), type: 'sell',
+        tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        amountIn: Math.round((1 / goToken1.price) * 100) / 100,
+        amountOut: 0.78, // exited at loss but saved capital
+        txHash: exitTx1, status: 'confirmed',
+        verdict: exitVerdict, timestamp: Date.now(),
+      };
+      const exitAlert1: ThreatAlert = {
+        id: uuidv4(), tokenAddress: addr1, tokenSymbol: goToken1.symbol,
+        threatType: 'whale-dump', severity: 'critical',
+        description: 'Sentinel auto-exit fired — position closed, $0.22 loss prevented further bleed',
+        action: 'auto-exit', exitTxHash: exitTx1, timestamp: Date.now(),
       };
 
-      state.addVerdict(exitTrade.verdict!);
-      state.removePosition(goAddress);
-      state.setWalletBalance(state.get().walletBalance + exitTrade.amountOut);
-      state.addTrade(exitTrade);
-      state.addThreat(exitAlert);
-      state.emitEvent({
-        type: 'exit',
-        data: { alert: exitAlert, trade: exitTrade },
+      state.addVerdict(exitVerdict);
+      state.removePosition(addr1);
+      state.setWalletBalance(state.get().walletBalance + exitTrade1.amountOut);
+      state.addTrade(exitTrade1);
+      state.addThreat(exitAlert1);
+      state.emitEvent({ type: 'exit', data: { alert: exitAlert1, trade: exitTrade1 }, timestamp: Date.now() });
+      state.broadcastState();
+    }, 70_000);
+
+    // t=90s — LAYERFI continues to hold well; Sentinel gives green re-check
+    setTimeout(() => {
+      state.upsertPosition({
+        tokenAddress: addr2, tokenSymbol: goToken2.symbol,
+        amount: Math.round((1 / goToken2.price) * 100) / 100,
+        entryPrice: goToken2.price,
+        currentPrice: goToken2.price * 1.14,
+        pnlPercent: 14, pnlUsd: 0.14,
+        lastSecurityCheck: Date.now(), lastVerdictLevel: 'GO',
+      });
+      state.addVerdict(makeVerdict(addr2, 'GO', 81, makeChecks([
+        ['Contract Safety', true, 90, 'Contract unchanged'],
+        ['Holder Analysis', true, 74, 'Distribution improving'],
+        ['Smart Money', true, 82, 'Smart money adding'],
+        ['Liquidity', true, 83, '$50 swap impact: 1.9%'],
+        ['Tx Simulation', true, 87, 'Simulation passed'],
+      ])));
+    }, 90_000);
+
+    // t=108s — Exit LAYERFI for profit
+    setTimeout(() => {
+      const exitTx2 = fakeTxHash('sell-layerfi-profit');
+      const exitTrade2: TradeExecution = {
+        id: uuidv4(), type: 'sell',
+        tokenAddress: addr2, tokenSymbol: goToken2.symbol,
+        amountIn: Math.round((1 / goToken2.price) * 100) / 100,
+        amountOut: 1.14,
+        txHash: exitTx2, status: 'confirmed',
         timestamp: Date.now(),
+      };
+      const profitAlert: ThreatAlert = {
+        id: uuidv4(), tokenAddress: addr2, tokenSymbol: goToken2.symbol,
+        threatType: 'profit-target', severity: 'low',
+        description: 'Profit target reached (+14%). Sentinel locked in gains.',
+        action: 'auto-exit', exitTxHash: exitTx2, timestamp: Date.now(),
+      };
+
+      state.removePosition(addr2);
+      state.setWalletBalance(state.get().walletBalance + exitTrade2.amountOut);
+      state.addTrade(exitTrade2);
+      state.addThreat(profitAlert);
+      state.emitEvent({ type: 'exit', data: { alert: profitAlert, trade: exitTrade2 }, timestamp: Date.now() });
+
+      state.addX402Transaction({
+        id: uuidv4(), direction: 'earned', amount: 0.005,
+        service: 'security-check:base', timestamp: Date.now(),
       });
       state.broadcastState();
-    }, 8000);
+    }, 108_000);
 
     return res.json({
       ok: true,
-      message: 'Demo cycle triggered',
+      message: 'Demo cycle triggered (2-minute lifecycle)',
+      durationMs: TOTAL_DEMO_MS,
       startedAt,
-      tokens: demoTokens.map((token, index) => ({
-        symbol: token.symbol,
-        tokenAddress: tokenAddresses[index],
-        level: token.level,
-        score: token.score,
+      tokens: demoTokens.map((t, i) => ({
+        symbol: t.symbol, tokenAddress: tokenAddresses[i],
+        level: t.level, score: t.score,
       })),
     });
   });
 
   return router;
 }
+

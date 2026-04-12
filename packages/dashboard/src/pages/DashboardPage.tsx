@@ -50,10 +50,10 @@ export function DashboardPage() {
   const triggerDemo = async () => {
     if (demoStatus === 'running') return;
     setDemoStatus('running');
-    setDemoCountdown(8);
+    setDemoCountdown(120);
     try {
       await apiPost('/api/demo/trigger', {});
-      // Countdown while demo plays out (8 seconds)
+      // Countdown while demo plays out (2 minutes)
       const interval = setInterval(() => {
         setDemoCountdown((c) => {
           if (c <= 1) { clearInterval(interval); setDemoStatus('done'); return 0; }

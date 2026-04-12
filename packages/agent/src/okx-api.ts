@@ -18,7 +18,7 @@ export const OKX_AGGREGATOR_BASE_PATH = '/api/v6/dex/aggregator';
 export const OKX_MARKET_BASE_PATH = '/api/v6/dex/market';
 
 // Slippage expressed as a percentage (not a decimal). "1" = 1%.
-export const DEFAULT_SLIPPAGE = '1';
+export const DEFAULT_SLIPPAGE = '5';
 
 export const XLAYER_TOKENS = {
   OKB: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
