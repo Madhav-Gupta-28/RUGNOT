@@ -5,8 +5,16 @@ import { env } from './config.js';
 import { buildChatReply } from './llm.js';
 import { vetToken } from './guardian.js';
 import type { StateStore } from './state.js';
-import { executeSell } from './executor.js';
-import type { AgentConfig, EconomicsSnapshot, Position, SecurityCheck, ThreatAlert, TradeExecution, Verdict, VerdictLevel } from './types.js';
+import { executeOpportunity, executeSell } from './executor.js';
+import {
+  XLAYER_TOKENS,
+  fetchTokenPrice,
+  getTokenMetadata,
+  getWalletStableBalances,
+  verifyOkxCredentials,
+} from './okx-api.js';
+import { triggerAutoExit } from './auto-exit.js';
+import type { AgentConfig, AgentStepEvent, EconomicsSnapshot, Position, SecurityCheck, ThreatAlert, TradeExecution, Verdict, VerdictLevel, VettedOpportunity } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Public token scanner — free, no x402, rate-limited per IP.
@@ -15,6 +23,10 @@ import type { AgentConfig, EconomicsSnapshot, Position, SecurityCheck, ThreatAle
 
 const publicScanRateMap = new Map<string, number>();
 const PUBLIC_SCAN_COOLDOWN_MS = 5_000; // 1 request per 5s per IP
+const MAINNET_DEMO_RUN_LABEL = 'judge-mainnet-cycle';
+
+let mainnetDemoInFlight = false;
+let lastMainnetDemoStartedAt = 0;
 
 export function createPublicRouter(state: StateStore): Router {
   const router = Router();
@@ -91,6 +103,194 @@ function isAdminAuthorized(req: Request): boolean {
   const direct = req.header('x-admin-token');
   const auth = req.header('authorization');
   return direct === env.adminToken || auth === `Bearer ${env.adminToken}`;
+}
+
+function isMainnetDemoAuthorized(req: Request): boolean {
+  return env.publicMainnetDemo || isAdminAuthorized(req);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clampMainnetDemoAmount(requested?: unknown): number {
+  const bodyAmount = typeof requested === 'number' ? requested : Number(requested);
+  const configured = Number.isFinite(bodyAmount) && bodyAmount > 0 ? bodyAmount : env.mainnetDemoAmountUsdt;
+  return Math.min(1, env.mainnetDemoAmountUsdt, Math.max(0.1, configured));
+}
+
+function emitAgentStep(state: StateStore, data: AgentStepEvent) {
+  state.emitEvent({
+    type: 'agent-step',
+    data,
+    timestamp: Date.now(),
+  });
+}
+
+function isRealEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+async function resolveMainnetDemoToken(
+  req: Request,
+  allowTokenOverride: boolean,
+): Promise<{ tokenAddress: string; tokenSymbol: string; currentPrice: number }> {
+  const bodyAddress = typeof req.body?.tokenAddress === 'string' ? req.body.tokenAddress.trim() : '';
+  const tokenAddress = allowTokenOverride && bodyAddress && isRealEvmAddress(bodyAddress)
+    ? bodyAddress
+    : env.mainnetDemoTokenAddress || XLAYER_TOKENS.USDC;
+  const metadata = await getTokenMetadata(tokenAddress).catch(() => null);
+  const tokenSymbol = allowTokenOverride && typeof req.body?.tokenSymbol === 'string' && req.body.tokenSymbol.trim()
+    ? req.body.tokenSymbol.trim()
+    : metadata?.tokenSymbol || env.mainnetDemoTokenSymbol || 'USDC';
+  const currentPrice = (await fetchTokenPrice(tokenAddress).catch(() => null)
+    ?? Number(metadata?.tokenUnitPrice ?? 0))
+    || 1;
+
+  return { tokenAddress, tokenSymbol, currentPrice };
+}
+
+function assertMainnetDemoSafety(verdict: Verdict) {
+  const contractSafety = verdict.checks.find((check) => check.name === 'Contract Safety');
+  const simulation = verdict.checks.find((check) => check.name === 'Tx Simulation');
+  const liquidity = verdict.checks.find((check) => check.name === 'Liquidity');
+  const executionLayerBlocked = [contractSafety, simulation, liquidity].some((check) => {
+    if (!check) return true;
+    const unavailable = check.reason.toLowerCase().includes('unavailable');
+    return unavailable || !check.passed || check.score <= 0;
+  });
+
+  if (executionLayerBlocked) {
+    throw new Error(`Guardian blocked mainnet demo execution layers with ${verdict.level} score ${verdict.score}.`);
+  }
+}
+
+async function runMainnetDemoLifecycle(state: StateStore, params: {
+  runId: string;
+  amountUsdt: number;
+  tokenAddress: string;
+  tokenSymbol: string;
+  currentPrice: number;
+  wasPaused: boolean;
+}) {
+  try {
+    emitAgentStep(state, {
+      stage: 'SCOUT',
+      status: 'started',
+      description: `Selected ${params.tokenSymbol} for a controlled ${params.amountUsdt.toFixed(2)} USDT X Layer proof trade.`,
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      runId: params.runId,
+    });
+
+    const verdict = await vetToken(params.tokenAddress);
+    state.addVerdict(verdict);
+    assertMainnetDemoSafety(verdict);
+
+    emitAgentStep(state, {
+      stage: 'GUARDIAN',
+      status: verdict.level === 'GO' ? 'passed' : 'running',
+      description: `Guardian returned ${verdict.level} ${verdict.score}; route and simulation layers passed, so the curated mainnet proof may execute.`,
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      runId: params.runId,
+    });
+
+    const beforePosition = state.get().positions.find((position) => (
+      position.tokenAddress.toLowerCase() === params.tokenAddress.toLowerCase()
+    ));
+    const beforeAmount = beforePosition?.amount ?? 0;
+
+    const opportunity: VettedOpportunity = {
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      signalType: 'volume-spike',
+      signalStrength: Math.max(70, verdict.score),
+      currentPrice: params.currentPrice,
+      verdict,
+    };
+
+    const buyTrade = await executeOpportunity(opportunity, state, params.amountUsdt);
+    if (!buyTrade || buyTrade.status !== 'confirmed') {
+      throw new Error('Executor buy did not confirm on X Layer.');
+    }
+
+    emitAgentStep(state, {
+      stage: 'EXECUTOR',
+      status: 'executed',
+      description: `Bought ${params.tokenSymbol} through OKX DEX Aggregator v6. TX ${buyTrade.txHash ? buyTrade.txHash.slice(0, 10) : 'pending'}.`,
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      txHash: buyTrade.txHash,
+      runId: params.runId,
+    });
+
+    await sleep(env.mainnetDemoExitDelayMs);
+
+    const latestPosition = state.get().positions.find((position) => (
+      position.tokenAddress.toLowerCase() === params.tokenAddress.toLowerCase()
+    ));
+    if (!latestPosition) {
+      throw new Error('Demo position disappeared before Sentinel exit.');
+    }
+
+    const demoAmount = Math.max(0, latestPosition.amount - beforeAmount);
+    if (demoAmount <= 0) {
+      throw new Error('No demo-acquired token amount available to sell.');
+    }
+
+    const exitVerdict = await vetToken(params.tokenAddress, 'exit');
+    state.addVerdict(exitVerdict);
+    emitAgentStep(state, {
+      stage: 'SENTINEL',
+      status: 'running',
+      description: `Sentinel rechecked ${params.tokenSymbol} and is closing the proof cycle back to USDT.`,
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      runId: params.runId,
+    });
+
+    const alert: ThreatAlert = {
+      id: uuidv4(),
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      threatType: 'demo-exit',
+      severity: 'medium',
+      description: 'Mainnet demo lifecycle complete. Sentinel is returning demo capital to USDT.',
+      action: 'auto-exit',
+      timestamp: Date.now(),
+    };
+
+    const exitResult = await triggerAutoExit(state, latestPosition, alert, exitVerdict, demoAmount);
+    state.addThreat(exitResult.alert);
+
+    if (exitResult.trade.status !== 'confirmed') {
+      throw new Error('Sentinel exit transaction did not confirm on X Layer.');
+    }
+
+    emitAgentStep(state, {
+      stage: 'AUTO_EXIT',
+      status: 'complete',
+      description: `Sold demo ${params.tokenSymbol} back to USDT. Full mainnet lifecycle complete.`,
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      txHash: exitResult.trade.txHash,
+      runId: params.runId,
+    });
+  } catch (error) {
+    emitAgentStep(state, {
+      stage: 'DEMO',
+      status: 'failed',
+      description: error instanceof Error ? error.message : 'Mainnet demo cycle failed.',
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      runId: params.runId,
+    });
+  } finally {
+    state.setPaused(params.wasPaused);
+    mainnetDemoInFlight = false;
+    state.broadcastState();
+  }
 }
 
 export function createApiRouter(state: StateStore): Router {
@@ -175,6 +375,99 @@ export function createApiRouter(state: StateStore): Router {
     state.broadcastState();
 
     return res.json(nextConfig);
+  });
+
+  router.post('/api/demo/mainnet-cycle', async (req, res) => {
+    if (!env.mainnetDemoEnabled) {
+      return res.status(403).json({
+        error: 'mainnet_demo_disabled',
+        message: 'Set MAINNET_DEMO_ENABLED=true to allow the real X Layer lifecycle demo.',
+      });
+    }
+
+    if (!isMainnetDemoAuthorized(req)) {
+      return res.status(401).json({ error: 'admin token required' });
+    }
+
+    if (mainnetDemoInFlight) {
+      return res.status(409).json({
+        error: 'demo_in_flight',
+        message: 'A mainnet demo cycle is already running.',
+      });
+    }
+
+    const cooldownRemaining = env.mainnetDemoCooldownMs - (Date.now() - lastMainnetDemoStartedAt);
+    if (cooldownRemaining > 0 && !isAdminAuthorized(req)) {
+      return res.status(429).json({
+        error: 'demo_cooldown',
+        retryAfterMs: cooldownRemaining,
+        message: `Mainnet demo is cooling down for ${Math.ceil(cooldownRemaining / 1000)}s.`,
+      });
+    }
+
+    if (!env.okxCredentialsConfigured || !env.privateKey) {
+      return res.status(409).json({
+        error: 'live_mode_not_configured',
+        message: 'Real mainnet demo needs OKX API keys and PRIVATE_KEY.',
+      });
+    }
+
+    const credentialsOk = await verifyOkxCredentials();
+    if (!credentialsOk) {
+      return res.status(409).json({
+        error: 'okx_credentials_invalid',
+        message: 'OKX API credentials could not be validated.',
+      });
+    }
+
+    const amountUsdt = clampMainnetDemoAmount(req.body?.amountUsdt);
+    const balances = await getWalletStableBalances(state.get().walletAddress);
+    state.setWalletBalance(balances.totalUsdt);
+
+    if (balances.okb <= 0 || Math.max(balances.usdt, balances.legacyUsdt) < amountUsdt) {
+      return res.status(409).json({
+        error: 'insufficient_demo_funds',
+        message: `Need OKB gas and at least ${amountUsdt.toFixed(2)} USDT in one X Layer USDT contract.`,
+        balances,
+      });
+    }
+
+    const token = await resolveMainnetDemoToken(req, !env.publicMainnetDemo && isAdminAuthorized(req));
+    const existingDemoTokenPosition = state.get().positions.find((position) => (
+      position.tokenAddress.toLowerCase() === token.tokenAddress.toLowerCase()
+    ));
+    if (existingDemoTokenPosition && existingDemoTokenPosition.amount > 0 && !req.body?.allowExistingPosition) {
+      return res.status(409).json({
+        error: 'demo_token_already_held',
+        message: `Wallet already holds ${existingDemoTokenPosition.tokenSymbol}. Sell it first or send allowExistingPosition=true.`,
+      });
+    }
+
+    const runId = `${MAINNET_DEMO_RUN_LABEL}-${Date.now().toString(36)}`;
+    const wasPaused = state.get().isPaused;
+    mainnetDemoInFlight = true;
+    lastMainnetDemoStartedAt = Date.now();
+    state.setPaused(true);
+
+    void runMainnetDemoLifecycle(state, {
+      runId,
+      amountUsdt,
+      tokenAddress: token.tokenAddress,
+      tokenSymbol: token.tokenSymbol,
+      currentPrice: token.currentPrice,
+      wasPaused,
+    });
+
+    return res.status(202).json({
+      ok: true,
+      mode: 'real-mainnet',
+      runId,
+      amountUsdt,
+      tokenAddress: token.tokenAddress,
+      tokenSymbol: token.tokenSymbol,
+      estimatedDurationMs: env.mainnetDemoExitDelayMs + 90_000,
+      message: 'Real X Layer demo cycle started. Watch Live Feed and Trade Ledger for OKLink tx hashes.',
+    });
   });
 
   router.post('/api/positions/:token/sell', async (req, res) => {
@@ -542,4 +835,3 @@ export function createDemoRouter(state: StateStore): Router {
 
   return router;
 }
-

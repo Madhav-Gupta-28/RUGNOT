@@ -1,5 +1,6 @@
 export type {
   AgentConfig,
+  AgentStepEvent,
   AgentState,
   EconomicsSnapshot,
   Position,

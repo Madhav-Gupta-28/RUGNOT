@@ -27,7 +27,11 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`POST ${path} failed with ${response.status}`);
+    const payload = await response.clone().json().catch(async () => ({ message: await response.text().catch(() => '') }));
+    const message = typeof payload === 'object' && payload !== null && 'message' in payload && typeof payload.message === 'string'
+      ? payload.message
+      : `POST ${path} failed with ${response.status}`;
+    throw new Error(message);
   }
 
   return response.json() as Promise<T>;

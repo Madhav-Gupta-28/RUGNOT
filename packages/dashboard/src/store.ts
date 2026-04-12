@@ -29,6 +29,10 @@ const initialState: AgentState = {
     aiProvider: 'local-fallback',
     aiModel: 'gemini-2.5-flash',
     mcpTransport: 'http',
+    mainnetDemoEnabled: false,
+    publicMainnetDemo: false,
+    mainnetDemoAmountUsdt: 1,
+    mainnetDemoTokenSymbol: 'USDC',
   },
 };
 

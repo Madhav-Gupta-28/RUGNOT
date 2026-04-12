@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { formatMoney } from '../lib/format';
+import type { AgentStepEvent } from '../lib/types';
 import { apiPost } from '../lib/api';
 import { useRugnotStore } from '../store';
+import { AgentOpsPanels } from '../components/AgentOpsPanels';
 import { LiveFeed } from '../components/LiveFeed';
 
 interface StatCardProps {
@@ -40,30 +42,88 @@ function LoopCard({ index, title, description }: Readonly<{ index: string; title
 
 type DemoStatus = 'idle' | 'running' | 'done' | 'error';
 
+interface MainnetDemoResponse {
+  ok: boolean;
+  estimatedDurationMs: number;
+  tokenSymbol: string;
+  amountUsdt: number;
+  message: string;
+  runId: string;
+}
+
 export function DashboardPage() {
   const state = useRugnotStore((store) => store.state);
+  const events = useRugnotStore((store) => store.events);
   const portfolioValue = state.positions.reduce((sum, position) => sum + position.amount * position.currentPrice, 0);
   const dangerVerdicts = state.recentVerdicts.filter((verdict) => verdict.level === 'DANGER').length;
   const [demoStatus, setDemoStatus] = useState<DemoStatus>('idle');
   const [demoCountdown, setDemoCountdown] = useState(0);
+  const [demoError, setDemoError] = useState('');
+  const [activeRunId, setActiveRunId] = useState('');
 
-  const triggerDemo = async () => {
+  const startCountdown = (seconds: number) => {
+    setDemoCountdown(seconds);
+    const interval = setInterval(() => {
+      setDemoCountdown((c) => {
+        if (c <= 1) {
+          clearInterval(interval);
+          setDemoStatus((current) => current === 'running' ? 'done' : current);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  };
+
+  const triggerMainnetDemo = async () => {
     if (demoStatus === 'running') return;
+    setDemoError('');
     setDemoStatus('running');
-    setDemoCountdown(120);
     try {
-      await apiPost('/api/demo/trigger', {});
-      // Countdown while demo plays out (2 minutes)
-      const interval = setInterval(() => {
-        setDemoCountdown((c) => {
-          if (c <= 1) { clearInterval(interval); setDemoStatus('done'); return 0; }
-          return c - 1;
-        });
-      }, 1000);
-    } catch {
+      const response = await apiPost<MainnetDemoResponse>('/api/demo/mainnet-cycle', {
+        amountUsdt: state.config.mainnetDemoAmountUsdt,
+      });
+      setActiveRunId(response.runId);
+      startCountdown(Math.ceil(response.estimatedDurationMs / 1000));
+    } catch (error) {
+      setDemoError(error instanceof Error ? error.message : 'Mainnet demo failed');
       setDemoStatus('error');
     }
   };
+
+  const triggerMockDemo = async () => {
+    if (demoStatus === 'running') return;
+    setDemoError('');
+    setDemoStatus('running');
+    try {
+      await apiPost('/api/demo/trigger', {});
+      setActiveRunId('');
+      startCountdown(120);
+    } catch (error) {
+      setDemoError(error instanceof Error ? error.message : 'Mock demo failed');
+      setDemoStatus('error');
+    }
+  };
+
+  useEffect(() => {
+    if (!activeRunId || demoStatus !== 'running') return;
+    const latestStep = events.find((event) => {
+      if (event.type !== 'agent-step' || typeof event.data !== 'object' || event.data === null) {
+        return false;
+      }
+      return (event.data as Partial<AgentStepEvent>).runId === activeRunId;
+    });
+    if (!latestStep || typeof latestStep.data !== 'object' || latestStep.data === null) return;
+    const step = latestStep.data as AgentStepEvent;
+    if (step.status === 'failed' || step.status === 'blocked') {
+      setDemoError(step.description);
+      setDemoStatus('error');
+    }
+    if (step.stage === 'AUTO_EXIT' && step.status === 'complete') {
+      setDemoStatus('done');
+      setDemoCountdown(0);
+    }
+  }, [activeRunId, demoStatus, events]);
   
   return (
     <div className="mx-auto max-w-7xl space-y-12">
@@ -90,8 +150,8 @@ export function DashboardPage() {
           <div className="flex flex-wrap gap-4 mt-8">
             <button
               id="demo-trigger-btn"
-              onClick={() => void triggerDemo()}
-              disabled={demoStatus === 'running'}
+              onClick={() => void triggerMainnetDemo()}
+              disabled={demoStatus === 'running' || !state.config.mainnetDemoEnabled}
               className={`rounded border px-6 py-2.5 font-mono text-[11px] font-bold tracking-widest uppercase transition-all flex items-center gap-2 ${
                 demoStatus === 'done'
                   ? 'border-accent-safe bg-accent-safe/20 text-accent-safe'
@@ -105,10 +165,17 @@ export function DashboardPage() {
               {demoStatus === 'running' && (
                 <span className="h-1.5 w-1.5 rounded-full bg-accent-safe animate-pulse-safe" />
               )}
-              {demoStatus === 'idle' && '▶ TRIGGER LIVE DEMO'}
-              {demoStatus === 'running' && `DEMO RUNNING... ${demoCountdown}s`}
-              {demoStatus === 'done' && '✓ DEMO COMPLETE — CHECK LIVE FEED'}
-              {demoStatus === 'error' && '✗ DEMO FAILED — ENABLE_DEMO=true?'}
+              {demoStatus === 'idle' && (state.config.mainnetDemoEnabled ? '▶ RUN REAL MAINNET DEMO' : 'MAINNET DEMO DISABLED')}
+              {demoStatus === 'running' && `REAL TX CYCLE... ${demoCountdown}s`}
+              {demoStatus === 'done' && '✓ MAINNET CYCLE COMPLETE — CHECK OKLINK'}
+              {demoStatus === 'error' && '✗ DEMO FAILED'}
+            </button>
+            <button
+              onClick={() => void triggerMockDemo()}
+              disabled={demoStatus === 'running'}
+              className="rounded border border-[#333333] bg-transparent px-6 py-2.5 font-mono text-[11px] font-bold tracking-widest text-secondary transition-colors hover:border-secondary hover:text-primary uppercase"
+            >
+              MOCK LIFECYCLE
             </button>
             <Link
               to="/scan"
@@ -116,6 +183,10 @@ export function DashboardPage() {
             >
               SCAN A TOKEN →
             </Link>
+          </div>
+          <div className="mt-4 max-w-2xl font-mono text-[10px] leading-relaxed text-secondary">
+            Real demo: {state.config.mainnetDemoAmountUsdt.toFixed(2)} USDT → {state.config.mainnetDemoTokenSymbol} → USDT on X Layer. Admin protected unless `MAINNET_DEMO_PUBLIC=true`.
+            {demoError ? <span className="ml-2 text-accent-danger">{demoError}</span> : null}
           </div>
         </div>
       </section>
@@ -127,6 +198,8 @@ export function DashboardPage() {
         <StatCard label="PORTFOLIO VALUE" value={formatMoney(portfolioValue)} caption="Marked open exposure" />
         <StatCard label="X402 REVENUE" value={`$${state.x402TotalEarned.toFixed(3)}`} caption="Security checks sold globally" />
       </section>
+
+      <AgentOpsPanels state={state} />
 
 
       {/* Workflow Loop Cards */}

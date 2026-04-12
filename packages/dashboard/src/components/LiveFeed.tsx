@@ -1,5 +1,5 @@
 import { describeEvent, timeAgo } from '../lib/format';
-import type { Verdict, WsEvent } from '../lib/types';
+import type { AgentStepEvent, Verdict, WsEvent } from '../lib/types';
 import { useRugnotStore } from '../store';
 
 const placeholderRows = [
@@ -9,6 +9,16 @@ const placeholderRows = [
 ];
 
 function getEventTone(event: WsEvent): string {
+  if (event.type === 'agent-step') {
+    const step = event.data as Partial<AgentStepEvent>;
+    if (step.status === 'failed' || step.status === 'blocked') {
+      return 'border-accent-danger/35 bg-accent-danger/10 text-accent-danger';
+    }
+    if (step.status === 'running' || step.status === 'started') {
+      return 'border-accent-info/35 bg-accent-info/10 text-accent-info';
+    }
+  }
+
   if (event.type === 'threat' || event.type === 'exit') {
     return 'border-accent-danger/35 bg-accent-danger/10 text-accent-danger';
   }
@@ -35,6 +45,10 @@ function getEventTone(event: WsEvent): string {
 }
 
 function getEventLabel(event: WsEvent): string {
+  if (event.type === 'agent-step') {
+    const step = event.data as Partial<AgentStepEvent>;
+    return step.stage ?? 'AGENT';
+  }
   if (event.type === 'state-update') {
     return 'STATE';
   }
@@ -42,6 +56,12 @@ function getEventLabel(event: WsEvent): string {
 }
 
 function getEventTextTone(event: WsEvent): string {
+  if (event.type === 'agent-step') {
+    const step = event.data as Partial<AgentStepEvent>;
+    if (step.status === 'failed' || step.status === 'blocked') return 'text-accent-danger';
+    if (step.status === 'running' || step.status === 'started') return 'text-accent-info';
+    return 'text-accent-safe';
+  }
   if (event.type === 'threat' || event.type === 'exit') {
     return 'text-accent-danger';
   }
@@ -107,6 +127,13 @@ export function LiveFeed() {
               const rec = event.data as Record<string, unknown>;
               const trade = rec.trade as Record<string, unknown> | undefined;
               const hash = trade?.txHash as string | undefined;
+              if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
+                txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
+              }
+            }
+            // Agent-step events can also carry execution hashes for judge demos.
+            if (event.type === 'agent-step' && typeof event.data === 'object' && event.data !== null && 'txHash' in event.data) {
+              const hash = (event.data as Partial<AgentStepEvent>).txHash;
               if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
                 txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
               }

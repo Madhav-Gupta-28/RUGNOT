@@ -105,6 +105,13 @@ export interface AppEnv {
   x402FacilitatorUrl: string;
   googleApiKey: string;
   googleModel: string;
+  mainnetDemoEnabled: boolean;
+  publicMainnetDemo: boolean;
+  mainnetDemoTokenAddress: string;
+  mainnetDemoTokenSymbol: string;
+  mainnetDemoAmountUsdt: number;
+  mainnetDemoExitDelayMs: number;
+  mainnetDemoCooldownMs: number;
   statePersistencePath: string;
   adminToken: string;
   port: number;
@@ -128,6 +135,10 @@ export const agentConfig: AgentConfig = {
   aiProvider: process.env.GOOGLE_GENERATIVE_AI_API_KEY ? 'gemini' : 'local-fallback',
   aiModel: readEnv('GOOGLE_MODEL', 'gemini-2.5-flash'),
   mcpTransport: parseMcpTransport(process.env.MCP_TRANSPORT),
+  mainnetDemoEnabled: parseBooleanEnv('MAINNET_DEMO_ENABLED', false),
+  publicMainnetDemo: parseBooleanEnv('MAINNET_DEMO_PUBLIC', false),
+  mainnetDemoAmountUsdt: parseNumber('MAINNET_DEMO_AMOUNT_USDT', 1),
+  mainnetDemoTokenSymbol: readEnv('MAINNET_DEMO_TOKEN_SYMBOL', 'USDC'),
 };
 
 validateOkxEnv();
@@ -148,6 +159,13 @@ export const env: AppEnv = {
   x402FacilitatorUrl: readEnv('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
   googleApiKey: readEnv('GOOGLE_GENERATIVE_AI_API_KEY'),
   googleModel: readEnv('GOOGLE_MODEL', 'gemini-2.5-flash'),
+  mainnetDemoEnabled: parseBooleanEnv('MAINNET_DEMO_ENABLED', false),
+  publicMainnetDemo: parseBooleanEnv('MAINNET_DEMO_PUBLIC', false),
+  mainnetDemoTokenAddress: readEnv('MAINNET_DEMO_TOKEN_ADDRESS', '0x74b7f16337b8972027f6196a17a631ac6de26d22'),
+  mainnetDemoTokenSymbol: readEnv('MAINNET_DEMO_TOKEN_SYMBOL', 'USDC'),
+  mainnetDemoAmountUsdt: parseNumber('MAINNET_DEMO_AMOUNT_USDT', 1),
+  mainnetDemoExitDelayMs: parseNumber('MAINNET_DEMO_EXIT_DELAY_MS', 45_000),
+  mainnetDemoCooldownMs: parseNumber('MAINNET_DEMO_COOLDOWN_MS', 300_000),
   statePersistencePath: resolveRuntimePath('STATE_PERSISTENCE_PATH', '.rugnot-state.json'),
   adminToken: readEnv('ADMIN_TOKEN'),
   port: parseNumber('PORT', 3001),

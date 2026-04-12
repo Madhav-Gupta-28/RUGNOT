@@ -28,6 +28,10 @@ const ERC20_APPROVE_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
 ];
 
+const ERC20_BALANCE_ABI = [
+  'function balanceOf(address owner) view returns (uint256)',
+];
+
 // Nonce mutex: both the Scout (Loop A) and Sentinel (Loop B) timers share the
 // same ethers.Wallet. Without a mutex they can race on the same nonce and one
 // of the transactions will revert with "nonce too low". We serialise every
@@ -92,6 +96,34 @@ async function getErc20Allowance(tokenAddress: string, owner: string, spender: s
     console.warn('[Executor] Could not read current ERC20 allowance:', error);
     return 0n;
   }
+}
+
+async function getErc20Balance(tokenAddress: string, owner: string): Promise<number> {
+  try {
+    const [raw, decimals] = await Promise.all([
+      new ethers.Contract(tokenAddress, ERC20_BALANCE_ABI, getProvider()).balanceOf(owner) as Promise<bigint>,
+      getTokenDecimals(tokenAddress, 6),
+    ]);
+    return fromBaseUnits(raw, decimals);
+  } catch {
+    return 0;
+  }
+}
+
+async function pickUsdtSpendToken(walletAddress: string, amountUsdt: number): Promise<string> {
+  const [currentUsdt, legacyUsdt] = await Promise.all([
+    getErc20Balance(XLAYER_TOKENS.USDT, walletAddress),
+    getErc20Balance(XLAYER_TOKENS.XLAYER_USDT, walletAddress),
+  ]);
+
+  if (currentUsdt >= amountUsdt) {
+    return XLAYER_TOKENS.USDT;
+  }
+  if (legacyUsdt >= amountUsdt) {
+    return XLAYER_TOKENS.XLAYER_USDT;
+  }
+
+  return currentUsdt >= legacyUsdt ? XLAYER_TOKENS.USDT : XLAYER_TOKENS.XLAYER_USDT;
 }
 
 function parseTxValue(value: unknown): bigint {
@@ -238,7 +270,9 @@ async function requestSwap(params: {
     return null;
   }
 
-  const fromTokenAddress = params.side === 'buy' ? XLAYER_TOKENS.USDT : params.tokenAddress;
+  const fromTokenAddress = params.side === 'buy'
+    ? await pickUsdtSpendToken(params.walletAddress, params.amount)
+    : params.tokenAddress;
   const toTokenAddress = params.side === 'buy' ? params.tokenAddress : XLAYER_TOKENS.USDT;
   const fromDecimals = params.side === 'buy' ? 6 : await getTokenDecimals(params.tokenAddress);
   const toDecimals = params.side === 'buy' ? await getTokenDecimals(params.tokenAddress) : 6;
@@ -327,11 +361,15 @@ function buildFailedTrade(params: {
 export async function executeOpportunity(
   opportunity: VettedOpportunity,
   state: StateStore,
+  amountOverrideUsdt?: number,
 ): Promise<TradeExecution | null> {
   const snapshot = state.get();
   const currentExposure = calculatePortfolioExposure(snapshot.positions);
   const remainingCapacity = snapshot.config.maxPortfolioSizeUsdt - currentExposure;
-  const amountIn = Math.min(snapshot.walletBalance, snapshot.config.maxPositionSizeUsdt, remainingCapacity);
+  const requestedSize = amountOverrideUsdt !== undefined && Number.isFinite(amountOverrideUsdt)
+    ? Math.max(0, amountOverrideUsdt)
+    : snapshot.config.maxPositionSizeUsdt;
+  const amountIn = Math.min(snapshot.walletBalance, snapshot.config.maxPositionSizeUsdt, requestedSize, remainingCapacity);
 
   if (amountIn <= 0) {
     return null;
@@ -392,12 +430,29 @@ export async function executeSell(
   position: Position,
   state: StateStore,
   verdict?: Verdict,
+  amountOverride?: number,
 ): Promise<TradeExecution> {
   const snapshot = state.get();
+  const amountToSell = amountOverride !== undefined && Number.isFinite(amountOverride)
+    ? Math.min(position.amount, Math.max(0, amountOverride))
+    : position.amount;
+
+  if (amountToSell <= 0) {
+    const failedTrade = buildFailedTrade({
+      side: 'sell',
+      tokenAddress: position.tokenAddress,
+      tokenSymbol: position.tokenSymbol,
+      amountIn: amountToSell,
+      verdict,
+    });
+    state.addTrade(failedTrade);
+    return failedTrade;
+  }
+
   const swap = await requestSwap({
     side: 'sell',
     tokenAddress: position.tokenAddress,
-    amount: position.amount,
+    amount: amountToSell,
     walletAddress: snapshot.walletAddress,
   });
 
@@ -406,14 +461,23 @@ export async function executeSell(
       side: 'sell',
       tokenAddress: position.tokenAddress,
       tokenSymbol: position.tokenSymbol,
-      amountIn: position.amount,
+      amountIn: amountToSell,
       verdict,
     });
     state.addTrade(failedTrade);
     return failedTrade;
   }
 
-  state.removePosition(position.tokenAddress);
+  const remainingAmount = position.amount - amountToSell;
+  if (remainingAmount <= Math.max(1e-12, position.amount * 0.000001)) {
+    state.removePosition(position.tokenAddress);
+  } else {
+    state.upsertPosition({
+      ...position,
+      amount: remainingAmount,
+      pnlUsd: position.pnlUsd * (remainingAmount / position.amount),
+    });
+  }
   state.setWalletBalance(snapshot.walletBalance + swap.amountOut);
   state.broadcastState();
 
@@ -422,7 +486,7 @@ export async function executeSell(
     type: 'sell',
     tokenAddress: position.tokenAddress,
     tokenSymbol: position.tokenSymbol,
-    amountIn: position.amount,
+    amountIn: amountToSell,
     amountOut: swap.amountOut,
     txHash: swap.txHash,
     status: swap.status,

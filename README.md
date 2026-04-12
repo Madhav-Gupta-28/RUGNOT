@@ -107,7 +107,7 @@ MCP_TRANSPORT=http
 - Chain ID: `196`
 - RPC: `https://rpc.xlayer.tech`
 - Gas token: OKB
-- Trading token: USDT on X Layer, `0x1E4a5963aBFD975d8c9021ce480b42188849D41d`
+- Trading token: USDT on X Layer. The executor can spend either current OKX-routed USDT `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` or legacy X Layer USDT `0x1E4a5963aBFD975d8c9021ce480b42188849D41d`.
 - Explorer: `https://www.oklink.com/x-layer`
 - x402 settlement: Base USDC by default
 
@@ -142,6 +142,36 @@ RPC_URL=https://rpc.xlayer.tech
 ```
 
 If OKX credentials are missing or invalid, RUGNOT starts in demo-safe mode. If credentials are valid but the wallet has no OKB or USDT, discovery and live swaps stay disabled while the API, dashboard, chat, x402, MCP, and demo route can still run.
+
+## Real Mainnet Judge Demo
+
+The dashboard `RUN REAL MAINNET DEMO` button can run a complete bounded lifecycle on X Layer:
+
+```text
+Scout selection -> Guardian proof checks -> OKX DEX buy -> Sentinel re-check -> OKX DEX sell back to USDT
+```
+
+This is not the mock demo route. It signs and broadcasts real approval/swap transactions with the agent wallet, then streams each stage to the dashboard and links confirmed hashes to OKLink.
+
+Enable it only during a judging window:
+
+```env
+MAINNET_DEMO_ENABLED=true
+MAINNET_DEMO_PUBLIC=true
+MAINNET_DEMO_TOKEN_ADDRESS=0x74b7f16337b8972027f6196a17a631ac6de26d22
+MAINNET_DEMO_TOKEN_SYMBOL=USDC
+MAINNET_DEMO_AMOUNT_USDT=1
+MAINNET_DEMO_EXIT_DELAY_MS=45000
+MAINNET_DEMO_COOLDOWN_MS=300000
+```
+
+Safety gates:
+
+- Hard cap of `1` USDT per run, also capped by `MAINNET_DEMO_AMOUNT_USDT`.
+- Requires valid OKX API credentials, `PRIVATE_KEY`, OKB gas, and enough USDT in one X Layer USDT contract.
+- Public mode ignores arbitrary token overrides; judges can only run the configured curated token.
+- Normal Scout/Sentinel loops are paused during the controlled proof cycle and restored afterward.
+- The route refuses execution if Guardian's contract, liquidity, or swap-simulation layers cannot prove the token is tradeable.
 
 ## Safety Controls
 

@@ -29,7 +29,7 @@ export const XLAYER_TOKENS = {
   // in this USDt0 / USDT contract.
   USDT: '0x779ded0c9e1022225f8e0630b35a9b54be713736',
   XLAYER_USDT: '0x1E4a5963aBFD975d8c9021ce480b42188849D41d',
-  USDC: '0x74b7F16337b8972027F6196A17a631ac6dE26d22',
+  USDC: '0x74b7f16337b8972027f6196a17a631ac6de26d22',
 } as const;
 
 const ERC20_ABI = [
@@ -335,6 +335,13 @@ export interface TokenBalanceAsset {
   uiAmount?: string;
   price?: string;
   tokenPrice?: string;
+}
+
+export interface WalletStableBalances {
+  okb: number;
+  usdt: number;
+  legacyUsdt: number;
+  totalUsdt: number;
 }
 
 let marketSignalListUnavailableUntil = 0;
@@ -648,9 +655,9 @@ export async function getAllTokenBalancesByAddress(walletAddress: string): Promi
   return response?.data?.flatMap((entry) => entry.tokenAssets ?? []) ?? [];
 }
 
-export async function getWalletOnchainBalances(walletAddress: string): Promise<{ okb: number; usdt: number }> {
+export async function getWalletStableBalances(walletAddress: string): Promise<WalletStableBalances> {
   if (!walletAddress || walletAddress === '0x0000000000000000000000000000000000000196') {
-    return { okb: 0, usdt: 0 };
+    return { okb: 0, usdt: 0, legacyUsdt: 0, totalUsdt: 0 };
   }
 
   try {
@@ -665,12 +672,19 @@ export async function getWalletOnchainBalances(walletAddress: string): Promise<{
 
     return {
       okb: Number(ethers.formatEther(okbRaw)),
-      usdt: usdt + legacyUsdt,
+      usdt,
+      legacyUsdt,
+      totalUsdt: usdt + legacyUsdt,
     };
   } catch (error) {
     console.warn('[X Layer] Could not read wallet balances:', error);
-    return { okb: 0, usdt: 0 };
+    return { okb: 0, usdt: 0, legacyUsdt: 0, totalUsdt: 0 };
   }
+}
+
+export async function getWalletOnchainBalances(walletAddress: string): Promise<{ okb: number; usdt: number }> {
+  const balances = await getWalletStableBalances(walletAddress);
+  return { okb: balances.okb, usdt: balances.totalUsdt };
 }
 
 export async function fetchWalletBalances(walletAddress: string): Promise<{ walletBalance: number; positions: Position[] }> {

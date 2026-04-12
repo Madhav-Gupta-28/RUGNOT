@@ -7,8 +7,9 @@ export async function triggerAutoExit(
   position: Position,
   alert: ThreatAlert,
   verdict?: Verdict,
+  amountOverride?: number,
 ): Promise<{ trade: TradeExecution; alert: ThreatAlert }> {
-  const trade = await executeSell(position, state, verdict);
+  const trade = await executeSell(position, state, verdict, amountOverride);
   const exitAlert: ThreatAlert = {
     ...alert,
     action: 'auto-exit',

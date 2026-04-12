@@ -55,12 +55,22 @@ export interface ThreatAlert {
   id: string;
   tokenAddress: string;
   tokenSymbol: string;
-  threatType: 'whale-dump' | 'price-crash' | 'liquidity-pull' | 'contract-change';
+  threatType: 'whale-dump' | 'price-crash' | 'liquidity-pull' | 'contract-change' | 'demo-exit';
   severity: 'medium' | 'high' | 'critical';
   description: string;
   action: 'alert-only' | 'auto-exit';
   exitTxHash?: string;
   timestamp: number;
+}
+
+export interface AgentStepEvent {
+  stage: 'SCOUT' | 'GUARDIAN' | 'EXECUTOR' | 'SENTINEL' | 'AUTO_EXIT' | 'DEMO';
+  status: 'started' | 'running' | 'passed' | 'blocked' | 'executed' | 'failed' | 'complete';
+  description: string;
+  tokenAddress?: string;
+  tokenSymbol?: string;
+  txHash?: string;
+  runId?: string;
 }
 
 export interface X402Transaction {
@@ -100,10 +110,14 @@ export interface AgentConfig {
   aiProvider: 'gemini' | 'local-fallback';
   aiModel: string;
   mcpTransport: 'stdio' | 'http' | 'disabled';
+  mainnetDemoEnabled: boolean;
+  publicMainnetDemo: boolean;
+  mainnetDemoAmountUsdt: number;
+  mainnetDemoTokenSymbol: string;
 }
 
 export interface WsEvent {
-  type: 'verdict' | 'trade' | 'threat' | 'exit' | 'x402' | 'state-update';
+  type: 'verdict' | 'trade' | 'threat' | 'exit' | 'x402' | 'agent-step' | 'state-update';
   data: unknown;
   timestamp: number;
 }

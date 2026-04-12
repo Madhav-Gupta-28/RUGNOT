@@ -1,4 +1,4 @@
-import type { TradeExecution, Verdict, WsEvent, X402Transaction } from './types';
+import type { AgentStepEvent, TradeExecution, Verdict, WsEvent, X402Transaction } from './types';
 
 export function truncateAddress(address: string, left = 6, right = 4): string {
   if (!address) {
@@ -74,6 +74,10 @@ function isX402(data: unknown): data is X402Transaction {
   return typeof data === 'object' && data !== null && 'direction' in data && 'amount' in data && 'service' in data;
 }
 
+function isAgentStep(data: unknown): data is AgentStepEvent {
+  return typeof data === 'object' && data !== null && 'stage' in data && 'description' in data;
+}
+
 export function describeEvent(event: WsEvent): string {
   if (event.type === 'verdict' && isVerdict(event.data)) {
     return `Scanned ${tokenLabel(event.data)} - ${event.data.level} (score: ${event.data.score})`;
@@ -103,6 +107,10 @@ export function describeEvent(event: WsEvent): string {
   if (event.type === 'x402' && isX402(event.data)) {
     const verb = event.data.direction === 'earned' ? 'Earned' : 'Spent';
     return `${verb} $${event.data.amount.toFixed(3)} from ${event.data.service.replace(/-/g, ' ')}`;
+  }
+
+  if (event.type === 'agent-step' && isAgentStep(event.data)) {
+    return `${event.data.stage}: ${event.data.description}`;
   }
 
   return 'State refreshed';
