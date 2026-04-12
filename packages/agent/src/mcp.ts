@@ -120,6 +120,18 @@ export function createMcpHttpRouter(state: StateStore): Router {
       });
     }
 
+    if (env.adminToken) {
+      const auth = req.header('authorization');
+      const direct = req.header('x-admin-token');
+      if (direct !== env.adminToken && auth !== `Bearer ${env.adminToken}`) {
+        return res.status(401).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Unauthorized. Admin token required for MCP access.' },
+          id: null,
+        });
+      }
+    }
+
     const server = createRugnotMcpServer(state);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
