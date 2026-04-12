@@ -47,13 +47,13 @@ export function SecurityPage() {
         <div className="absolute top-0 right-0 p-8 opacity-10 font-mono text-[6rem] font-bold leading-none select-none pointer-events-none">OKX</div>
         
         <div className="relative z-10">
-          <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-4">MPC GUARDIAN TERMINAL</div>
+          <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-4">GUARDIAN SECURITY TERMINAL</div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 pb-6 border-b border-border/50 gap-6">
             <h1 className="font-sans text-3xl sm:text-4xl lg:text-5xl font-bold text-primary tracking-tighter uppercase">
                {selectedVerdict === dormantVerdict ? 'AWAITING SCAN' : truncateAddress(selectedVerdict.tokenAddress, 16, 4)}
             </h1>
             <div className="flex items-center gap-4 border border-border rounded-full px-6 py-3 bg-[#050505]">
-               <span className="font-mono text-xs uppercase text-secondary">THRESHOLD CONSENSUS</span>
+               <span className="font-mono text-xs uppercase text-secondary">RISK VERDICT</span>
                <SecurityBadge level={selectedVerdict.level} />
             </div>
           </div>
@@ -78,17 +78,17 @@ export function SecurityPage() {
             <div>
                <div className="font-mono text-[11px] uppercase tracking-widest text-secondary mb-4">PIPELINE STATUS</div>
                <div className="font-mono text-2xl font-bold text-primary mt-1 tracking-tight">RESOLVED <span className={selectedVerdict.level === 'GO' ? 'text-accent-safe' : 'text-accent-danger'}>{selectedVerdict.level}</span></div>
-               <div className="font-mono text-[11px] text-secondary/70 mt-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-accent-safe animate-pulse-safe" /> STITCHED 5/5 CHECKS</div>
+               <div className="font-mono text-[11px] text-secondary/70 mt-3 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-accent-safe animate-pulse-safe" /> 5/5 CHECKS EVALUATED</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Grid of checks (Stitch MPC cryptographic node visual) */}
+      {/* Grid of Guardian checks */}
       <section className="py-8">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-10 gap-4">
            <div>
-             <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-3">STITCH MPC NODE VERIFICATION</div>
+             <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-3">GUARDIAN CHECK VERIFICATION</div>
              <h2 className="font-sans text-3xl font-bold text-primary tracking-tight">LAYERED SECURITY DEFENSE</h2>
            </div>
            <div className="font-mono text-[11px] tracking-widest text-accent-safe uppercase border border-accent-safe/30 bg-accent-safe/10 px-4 py-2 rounded-full hidden sm:block">PIPELINE #196 ALIGNED</div>
@@ -107,7 +107,7 @@ export function SecurityPage() {
                      </div>
                      <div>
                         <div className="font-sans text-lg font-bold text-primary uppercase tracking-tight">{check.name}</div>
-                        <div className="font-mono text-[10px] uppercase text-secondary/60 tracking-widest mt-1">SIGNATURE VERIFIED</div>
+                        <div className="font-mono text-[10px] uppercase text-secondary/60 tracking-widest mt-1">RISK INPUT VERIFIED</div>
                      </div>
                   </div>
                   <div className={`font-mono text-[11px] tracking-widest font-bold uppercase border px-4 py-2 rounded-full ${check.passed ? 'border-accent-safe text-accent-safe bg-accent-safe/10 shadow-[0_0_10px_rgba(188,255,47,0.2)]' : 'border-accent-danger text-accent-danger bg-accent-danger/10'}`}>
@@ -117,13 +117,13 @@ export function SecurityPage() {
 
                <div className="flex items-center justify-between mt-2">
                  <div>
-                    <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-3">THRESHOLD SCORE</div>
+                    <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-3">CHECK SCORE</div>
                     <div className={`font-mono text-4xl font-light tracking-tight ${check.score > 80 ? 'text-accent-safe' : check.score < 40 ? 'text-accent-danger' : 'text-accent-caution'}`}>
                       {check.score}
                     </div>
                  </div>
                  <div className="text-right max-w-[240px]">
-                    <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-3">CRYPTOGRAPHIC REASON</div>
+                    <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-3">GUARDIAN REASON</div>
                     <div className="font-sans text-sm text-primary/90 truncate">{check.reason}</div>
                  </div>
                </div>

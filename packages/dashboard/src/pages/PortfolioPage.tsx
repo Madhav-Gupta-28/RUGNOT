@@ -13,7 +13,7 @@ export function PortfolioPage() {
         <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-3">PORTFOLIO TERMINAL</div>
         <h1 className="font-sans text-4xl lg:text-5xl font-bold text-primary mb-4 tracking-tighter">GUARDIAN WALLET VAULT</h1>
         <p className="font-sans text-lg text-secondary/80 max-w-3xl leading-relaxed">
-          Track secure positions, mark-to-market PnL, and agent-managed capital exposure across all connected chains protected by Stitch MPC signatures.
+          Track active positions, mark-to-market PnL, and agent-managed capital exposure protected by Guardian checks and Sentinel monitoring.
         </p>
       </section>
 

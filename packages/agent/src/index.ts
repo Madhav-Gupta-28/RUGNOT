@@ -69,29 +69,22 @@ async function hydrateWalletState(): Promise<void> {
     .positions
     .filter((position) => !BASE_POSITION_TOKENS.has(position.tokenAddress.toLowerCase()));
 
-  if (wallet.positions.length > 0) {
-    const byAddress = new Map(persistedPositions.map((position) => [
-      position.tokenAddress.toLowerCase(),
-      position,
-    ]));
-    const mergedPositions: Position[] = wallet.positions.map((position) => {
-      const existing = byAddress.get(position.tokenAddress.toLowerCase());
-      return existing
-        ? {
-            ...position,
-            entryPrice: existing.entryPrice,
-            lastSecurityCheck: existing.lastSecurityCheck,
-            lastVerdictLevel: existing.lastVerdictLevel,
-          }
-        : position;
-    });
-    state.replacePositions(mergedPositions);
-    return;
-  }
-
-  if (persistedPositions.length !== state.get().positions.length) {
-    state.replacePositions(persistedPositions);
-  }
+  const byAddress = new Map(persistedPositions.map((position) => [
+    position.tokenAddress.toLowerCase(),
+    position,
+  ]));
+  const mergedPositions: Position[] = wallet.positions.map((position) => {
+    const existing = byAddress.get(position.tokenAddress.toLowerCase());
+    return existing
+      ? {
+          ...position,
+          entryPrice: existing.entryPrice,
+          lastSecurityCheck: existing.lastSecurityCheck,
+          lastVerdictLevel: existing.lastVerdictLevel,
+        }
+      : position;
+  });
+  state.replacePositions(mergedPositions);
 }
 
 async function discoveryTick(): Promise<void> {

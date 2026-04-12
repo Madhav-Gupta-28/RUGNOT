@@ -45,7 +45,7 @@ export function DashboardPage() {
     <div className="mx-auto max-w-7xl space-y-12">
       {/* Hero Section */}
       <section className="terminal-panel rounded-xl border border-border p-8 md:p-12 mb-12 mt-4 relative overflow-hidden">
-        {/* Subtle MPC nodes background aesthetic */}
+        {/* Subtle Guardian signal-map background aesthetic */}
         <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#bcff2f 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-[#0a0a0a]/80 to-[#000000] opacity-90" />
         
@@ -63,7 +63,7 @@ export function DashboardPage() {
           </h2>
           
           <p className="max-w-3xl font-sans text-lg lg:text-xl text-secondary/80 leading-relaxed mb-12">
-            Scout finds signals. Guardian blocks rugs. Sentinel exits threats. Every analysis is powered by Stitch MPC thresholds to guarantee trustless execution and cryptographic proof of security on X Layer.
+            Scout finds live OKX market signals. Guardian blocks rugs with five independent risk checks. Sentinel watches open positions and exits threats before they can drain the wallet.
           </p>
           
           <div className="flex flex-wrap gap-6">
@@ -87,14 +87,14 @@ export function DashboardPage() {
       {/* Stats Grid */}
       <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="TOTAL SCANS" value={String(state.recentVerdicts.length)} caption="Guardian verdict ledger" />
-        <StatCard label="THREATS BLOCKED" value={String(dangerVerdicts)} caption="Auto-blocked or exited via MPC" />
+        <StatCard label="THREATS BLOCKED" value={String(dangerVerdicts)} caption="Blocked by Guardian or Sentinel" />
         <StatCard label="PORTFOLIO VALUE" value={formatMoney(portfolioValue)} caption="Marked open exposure" />
         <StatCard label="X402 REVENUE" value={`$${state.x402TotalEarned.toFixed(3)}`} caption="Security checks sold globally" />
       </section>
 
-      {/* Workflow Loop Cards (MPC Stitch Thematic) */}
+      {/* Workflow Loop Cards */}
       <div className="pt-8">
-         <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-3">STITCH MPC ARCHITECTURE</div>
+         <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-3">RUGNOT AGENT ARCHITECTURE</div>
          <h3 className="font-sans text-3xl font-bold text-primary mb-8">VERIFIED THRESHOLD PIPELINE</h3>
          <section className="grid gap-6 lg:grid-cols-3 relative">
            <LoopCard 
@@ -104,12 +104,12 @@ export function DashboardPage() {
            />
            <LoopCard 
              index="02" 
-             title="Stitch Multi-Sig Verification" 
-             description="Five deep-security checks executed across MPC node thresholds. Full analysis is completely transparent." 
+             title="Guardian Verification" 
+             description="Five security checks score contract safety, holders, smart money, liquidity, and swap simulation before any execution." 
            />
            <LoopCard 
              index="03" 
-             title="Sentinel Key-Action" 
+             title="Sentinel Auto-Exit" 
              description="Monitoring open positions for automated threat-triggers, forcing defensive exits to eliminate portfolio loss." 
            />
          </section>

@@ -705,7 +705,7 @@ export async function fetchWalletBalances(walletAddress: string): Promise<{ wall
     return [] as TokenBalanceAsset[];
   });
 
-  const positions: Position[] = tokenAssets
+  const candidateAssets = tokenAssets
     .filter((asset) => String(asset.chainIndex ?? env.agentChainId) === env.agentChainId)
     .filter((asset) => {
       const tokenAddress = asset.tokenContractAddress?.toLowerCase() ?? '';
@@ -713,12 +713,26 @@ export async function fetchWalletBalances(walletAddress: string): Promise<{ wall
         && tokenAddress !== XLAYER_TOKENS.USDT.toLowerCase()
         && tokenAddress !== XLAYER_TOKENS.XLAYER_USDT.toLowerCase()
         && tokenAddress !== XLAYER_TOKENS.WOKB.toLowerCase()
-        && tokenAddress !== XLAYER_TOKENS.OKB.toLowerCase();
-    })
-    .map((asset) => {
-      const amount = readNumber(asset.balance ?? asset.uiAmount ?? 0, 0);
-      const currentPrice = readNumber(asset.tokenPrice ?? asset.price ?? 0, 0);
+        && tokenAddress !== XLAYER_TOKENS.OKB.toLowerCase()
+        && tokenAddress !== XLAYER_TOKENS.WETH.toLowerCase();
+    });
+
+  const positions = (await Promise.all(candidateAssets.map(async (asset) => {
       const tokenAddress = asset.tokenContractAddress ?? '';
+      let amount = readNumber(asset.balance ?? asset.uiAmount ?? 0, 0);
+
+      // OKX's wallet-balance index can lag immediately after a sell. Confirm
+      // candidate positions against the chain so the dashboard doesn't show
+      // already-closed tokens as still invested.
+      try {
+        const decimals = await getTokenDecimals(tokenAddress);
+        const rawBalance = await new ethers.Contract(tokenAddress, ERC20_ABI, getProvider()).balanceOf(walletAddress) as bigint;
+        amount = fromBaseUnits(rawBalance, decimals);
+      } catch {
+        // Fall back to OKX's indexed amount when direct ERC-20 reads fail.
+      }
+
+      const currentPrice = readNumber(asset.tokenPrice ?? asset.price ?? 0, 0);
       return {
         tokenAddress,
         tokenSymbol: asset.symbol ?? asset.tokenSymbol ?? tokenAddress.slice(0, 6),
@@ -730,7 +744,7 @@ export async function fetchWalletBalances(walletAddress: string): Promise<{ wall
         lastSecurityCheck: 0,
         lastVerdictLevel: 'CAUTION',
       } satisfies Position;
-    })
+    })))
     .filter((position) => position.amount > 0);
 
   return { walletBalance: balances.usdt, positions };

@@ -13,8 +13,12 @@ const candidateEnvPaths = [
   path.resolve(currentDir, '../../../.env'),
 ];
 
+let loadedEnvDir = '';
 for (const envPath of candidateEnvPaths) {
-  dotenv.config({ path: envPath, override: false });
+  const result = dotenv.config({ path: envPath, override: false });
+  if (!result.error && !loadedEnvDir) {
+    loadedEnvDir = path.dirname(envPath);
+  }
 }
 
 type RiskTolerance = AgentConfig['riskTolerance'];
@@ -22,6 +26,18 @@ type McpTransport = 'stdio' | 'http' | 'disabled';
 
 function readEnv(name: string, fallback = ''): string {
   return process.env[name] || fallback;
+}
+
+function resolveRuntimePath(name: string, fallback = ''): string {
+  const raw = readEnv(name, fallback);
+  if (!raw || path.isAbsolute(raw)) {
+    return raw;
+  }
+
+  // npm workspaces run @rugnot/agent from packages/agent, but users edit the
+  // root .env and expect relative paths there to resolve from the repo root.
+  const baseDir = loadedEnvDir || process.env.INIT_CWD || process.cwd();
+  return path.resolve(baseDir, raw);
 }
 
 function validateOkxEnv() {
@@ -110,7 +126,7 @@ export const env: AppEnv = {
   x402FacilitatorUrl: readEnv('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
   anthropicApiKey: readEnv('ANTHROPIC_API_KEY'),
   anthropicModel: readEnv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
-  statePersistencePath: readEnv('STATE_PERSISTENCE_PATH', '.rugnot-state.json'),
+  statePersistencePath: resolveRuntimePath('STATE_PERSISTENCE_PATH', '.rugnot-state.json'),
   adminToken: readEnv('ADMIN_TOKEN'),
   port: parseNumber('PORT', 3001),
   enableMcp: (process.env.ENABLE_MCP || 'false').toLowerCase() === 'true',

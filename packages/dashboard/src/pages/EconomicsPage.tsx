@@ -35,13 +35,13 @@ export function EconomicsPage() {
         <div className="font-mono text-[11px] tracking-widest uppercase text-secondary mb-3">NETWORK ECONOMICS</div>
         <h1 className="font-sans text-4xl lg:text-5xl font-bold text-primary mb-4 tracking-tighter">X-402 PROTOCOL YIELD</h1>
         <p className="font-sans text-lg text-secondary/80 max-w-3xl leading-relaxed">
-          Monitor revenue generated from OKX X Layer deployment, protocol security scans, and operational Stitch MPC agent expenditures.
+          Monitor revenue from paid security checks, live agent costs, and the earn-pay-earn loop that keeps RUGNOT scanning.
         </p>
       </section>
 
       <section className="grid gap-6 sm:grid-cols-3">
         <StatCard label="TOTAL EARNED" value={`$${state.x402TotalEarned.toFixed(3)}`} tone="safe" caption="Revenue from global security scans" />
-        <StatCard label="TOTAL SPENT" value={`$${state.x402TotalSpent.toFixed(3)}`} tone="caution" caption="Agent gas and MPC compute costs" />
+        <StatCard label="TOTAL SPENT" value={`$${state.x402TotalSpent.toFixed(3)}`} tone="caution" caption="Signal data and operating costs" />
         <StatCard label="NET PROTOCOL PROFIT" value={`$${netProfit.toFixed(3)}`} tone="info" caption="Overall protocol capital efficiency" />
       </section>
 

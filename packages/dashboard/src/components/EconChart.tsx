@@ -48,7 +48,7 @@ export function EconChart({ transactions }: EconChartProps) {
     <section className="rounded-xl border border-border bg-bg/40 p-8 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
       <div className="mb-8">
         <h2 className="font-sans text-2xl font-bold text-primary mb-2 tracking-tight">X402 PROTOCOL FLOW</h2>
-        <p className="font-mono text-[10px] tracking-widest text-secondary uppercase">Security-check revenue vs MPC operational overheads.</p>
+        <p className="font-mono text-[10px] tracking-widest text-secondary uppercase">Security-check revenue vs agent operating costs.</p>
       </div>
       <div className="h-80 w-full">
         <ResponsiveContainer width="100%" height="100%">
