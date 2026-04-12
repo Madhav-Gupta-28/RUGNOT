@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import cors from 'cors';
 import express from 'express';
@@ -7,13 +9,15 @@ import { agentConfig, env } from './config.js';
 import { executeOpportunity } from './executor.js';
 import { createMcpHttpRouter, startMcpServer } from './mcp.js';
 import { XLAYER_TOKENS, fetchWalletBalances, getWalletOnchainBalances, verifyOkxCredentials } from './okx-api.js';
-import { createApiRouter, createDemoRouter } from './routes.js';
+import { createApiRouter, createDemoRouter, createPublicRouter } from './routes.js';
 import { runScoutCycle } from './scout.js';
 import { runSentinelCycle } from './sentinel.js';
 import { StateStore } from './state.js';
 import { attachWebSocketServer } from './ws.js';
 import { createX402Router } from './x402.js';
 import type { Position } from './types.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const server = createServer(app);
@@ -47,11 +51,23 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, timestamp: Date.now() });
 });
 app.use(createApiRouter(state));
+app.use(createPublicRouter(state));
 if (process.env.ENABLE_DEMO === 'true') {
   app.use(createDemoRouter(state));
 }
 app.use(createX402Router(state));
 app.use(createMcpHttpRouter(state));
+
+// In production the dashboard is compiled to a static bundle.
+// Serve it from the agent so there's exactly one URL for everything.
+if (process.env.NODE_ENV === 'production') {
+  const dashboardDist = path.resolve(__dirname, '../../dashboard/dist');
+  app.use(express.static(dashboardDist));
+  // SPA fallback — any unknown route returns index.html so client-side routing works
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(dashboardDist, 'index.html'));
+  });
+}
 
 const wss = attachWebSocketServer(server, state);
 

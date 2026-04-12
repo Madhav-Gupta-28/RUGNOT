@@ -4,6 +4,7 @@ import { truncateAddress } from '../lib/format';
 import { useRugnotStore } from '../store';
 
 const links = [
+  { to: '/scan', label: 'scan ✦' },
   { to: '/portfolio', label: 'portfolio' },
   { to: '/security', label: 'security' },
   { to: '/economics', label: 'economics' },

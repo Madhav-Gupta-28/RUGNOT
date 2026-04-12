@@ -1,0 +1,9 @@
+.git
+node_modules
+.env
+.env.local
+.rugnot-state.json
+*.log
+.DS_Store
+packages/agent/dist
+packages/dashboard/dist

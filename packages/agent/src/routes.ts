@@ -1,11 +1,70 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
 import { env } from './config.js';
 import { buildChatReply } from './llm.js';
+import { vetToken } from './guardian.js';
 import type { StateStore } from './state.js';
 import { executeSell } from './executor.js';
 import type { AgentConfig, EconomicsSnapshot, Position, SecurityCheck, ThreatAlert, TradeExecution, Verdict, VerdictLevel } from './types.js';
+
+// ---------------------------------------------------------------------------
+// Public token scanner — free, no x402, rate-limited per IP.
+// Powers the /scan page visible to anyone who visits the deployed app.
+// ---------------------------------------------------------------------------
+
+const publicScanRateMap = new Map<string, number>();
+const PUBLIC_SCAN_COOLDOWN_MS = 5_000; // 1 request per 5s per IP
+
+export function createPublicRouter(state: StateStore): Router {
+  const router = Router();
+
+  router.get('/api/public/scan', async (req: Request, res: Response) => {
+    const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+      ?? req.socket.remoteAddress
+      ?? 'unknown';
+
+    const lastScan = publicScanRateMap.get(ip) ?? 0;
+    const now = Date.now();
+    const remaining = PUBLIC_SCAN_COOLDOWN_MS - (now - lastScan);
+
+    if (remaining > 0) {
+      return res.status(429).json({
+        error: 'rate_limited',
+        message: `Please wait ${Math.ceil(remaining / 1000)}s before scanning again.`,
+        retryAfterMs: remaining,
+      });
+    }
+
+    const tokenAddress = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+    if (!tokenAddress || !/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+      return res.status(400).json({
+        error: 'invalid_address',
+        message: 'Provide a valid EVM token address via ?token=0x...',
+      });
+    }
+
+    publicScanRateMap.set(ip, now);
+    // Prune old entries to prevent memory leak (keep only last 1000 IPs)
+    if (publicScanRateMap.size > 1000) {
+      const oldest = [...publicScanRateMap.entries()].sort((a, b) => a[1] - b[1])[0];
+      if (oldest) publicScanRateMap.delete(oldest[0]);
+    }
+
+    try {
+      const verdict = await vetToken(tokenAddress);
+      state.addVerdict(verdict);
+      return res.json(verdict);
+    } catch (error) {
+      console.error('[Public Scan] Guardian failed:', error);
+      return res.status(500).json({ error: 'scan_failed', message: 'Guardian scan failed. Try again.' });
+    }
+  });
+
+  return router;
+}
+
+
 
 function sanitizeConfigUpdate(partial: Partial<AgentConfig>): Partial<AgentConfig> {
   const next: Partial<AgentConfig> = {};
