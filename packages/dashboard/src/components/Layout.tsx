@@ -71,8 +71,16 @@ export function Layout() {
               {state.walletBalance.toFixed(2)} USDT
             </span>
           </div>
-          <button className="border border-border bg-transparent px-4 py-2 font-mono text-[10px] font-bold tracking-widest uppercase text-secondary transition hover:border-accent-safe hover:text-accent-safe">
-            {state.walletAddress ? truncateAddress(state.walletAddress) : 'CONNECT WALLET'}
+          <button
+            onClick={() => {
+              if (state.walletAddress) {
+                void navigator.clipboard.writeText(state.walletAddress);
+              }
+            }}
+            title={state.walletAddress || 'No wallet configured'}
+            className="border border-border bg-transparent px-4 py-2 font-mono text-[10px] font-bold tracking-widest uppercase text-secondary transition hover:border-accent-safe hover:text-accent-safe active:text-primary"
+          >
+            {state.walletAddress ? truncateAddress(state.walletAddress) : 'NO WALLET'}
           </button>
         </div>
       </header>

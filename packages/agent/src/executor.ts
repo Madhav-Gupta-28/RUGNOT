@@ -118,14 +118,25 @@ function buildTransactionRequest(raw: Record<string, unknown>, fallbackTo: strin
   if (gas !== undefined) {
     request.gasLimit = parseTxValue(gas);
   }
-  if (raw.gasPrice !== undefined) {
+
+  // OKX v6 swap API sometimes returns BOTH gasPrice AND maxPriorityFeePerGas in
+  // the same response. EIP-1559 (type 2) transactions must NOT include gasPrice —
+  // ethers v6 rejects the tx with INVALID_ARGUMENT if both are present.
+  // Rule: prefer EIP-1559 fields; only fall back to legacy gasPrice when neither
+  // maxFeePerGas nor maxPriorityFeePerGas is provided by the API.
+  const hasEip1559 = raw.maxFeePerGas !== undefined || raw.maxPriorityFeePerGas !== undefined;
+
+  if (hasEip1559) {
+    if (raw.maxFeePerGas !== undefined) {
+      request.maxFeePerGas = parseTxValue(raw.maxFeePerGas);
+    }
+    if (raw.maxPriorityFeePerGas !== undefined) {
+      request.maxPriorityFeePerGas = parseTxValue(raw.maxPriorityFeePerGas);
+    }
+    // Explicitly do NOT set gasPrice — mixing it with EIP-1559 fields causes
+    // ethers v6 to throw "eip-1559 transaction do not support gasPrice".
+  } else if (raw.gasPrice !== undefined) {
     request.gasPrice = parseTxValue(raw.gasPrice);
-  }
-  if (raw.maxFeePerGas !== undefined) {
-    request.maxFeePerGas = parseTxValue(raw.maxFeePerGas);
-  }
-  if (raw.maxPriorityFeePerGas !== undefined) {
-    request.maxPriorityFeePerGas = parseTxValue(raw.maxPriorityFeePerGas);
   }
 
   return request;
