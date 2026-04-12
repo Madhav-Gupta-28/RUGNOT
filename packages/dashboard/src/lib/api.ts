@@ -16,10 +16,12 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const adminToken = localStorage.getItem('RUGNOT_ADMIN_TOKEN') || 'local-test-token';
   const response = await fetch(withBase(path), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-admin-token': adminToken,
     },
     body: JSON.stringify(body),
   });

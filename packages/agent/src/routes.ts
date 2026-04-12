@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { env } from './config.js';
 import { buildChatReply } from './llm.js';
 import type { StateStore } from './state.js';
+import { executeSell } from './executor.js';
 import type { AgentConfig, EconomicsSnapshot, Position, SecurityCheck, ThreatAlert, TradeExecution, Verdict, VerdictLevel } from './types.js';
 
 function sanitizeConfigUpdate(partial: Partial<AgentConfig>): Partial<AgentConfig> {
@@ -115,6 +116,47 @@ export function createApiRouter(state: StateStore): Router {
     state.broadcastState();
 
     return res.json(nextConfig);
+  });
+
+  router.post('/api/positions/:token/sell', async (req, res) => {
+    if (!isAdminAuthorized(req)) {
+      return res.status(401).json({ error: 'admin token required' });
+    }
+
+    const { token } = req.params;
+    const position = state.get().positions.find((p) => p.tokenAddress.toLowerCase() === token.toLowerCase());
+    if (!position) {
+      return res.status(404).json({ error: 'Position not found' });
+    }
+
+    try {
+      const trade = await executeSell(position, state);
+      return res.json({ ok: true, trade });
+    } catch (error) {
+      console.error(`[API] Manual sell failed for ${token}:`, error);
+      return res.status(500).json({ error: 'Sell execution failed' });
+    }
+  });
+
+  router.post('/api/positions/sell-all', async (req, res) => {
+    if (!isAdminAuthorized(req)) {
+      return res.status(401).json({ error: 'admin token required' });
+    }
+
+    const positions = [...state.get().positions];
+    const results = [];
+
+    for (const position of positions) {
+      try {
+        const trade = await executeSell(position, state);
+        results.push({ tokenAddress: position.tokenAddress, symbol: position.tokenSymbol, status: trade.status, trade });
+      } catch (error) {
+        console.error(`[API] Manual sell failed for ${position.tokenAddress}:`, error);
+        results.push({ tokenAddress: position.tokenAddress, symbol: position.tokenSymbol, status: 'error' });
+      }
+    }
+
+    return res.json({ ok: true, results });
   });
 
   return router;

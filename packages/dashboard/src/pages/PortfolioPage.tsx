@@ -1,11 +1,27 @@
+import { useState } from 'react';
 import { PnlChart } from '../components/PnlChart';
 import { PositionRow } from '../components/PositionRow';
 import { useRugnotStore } from '../store';
 import { formatMoney } from '../lib/format';
+import { apiPost } from '../lib/api';
 
 export function PortfolioPage() {
+  const [isSellingAll, setIsSellingAll] = useState(false);
   const { positions, recentTrades, walletAddress } = useRugnotStore((store) => store.state);
   const portfolioValue = positions.reduce((sum, position) => sum + position.amount * position.currentPrice, 0);
+
+  const handleSellAll = async () => {
+    if (!confirm('Are you sure you want to sell all active positions?')) return;
+    try {
+      setIsSellingAll(true);
+      await apiPost('/api/positions/sell-all', {});
+    } catch (err) {
+      console.error(err);
+      alert('Failed to sell all');
+    } finally {
+      setIsSellingAll(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl space-y-12 mt-4">
@@ -53,9 +69,18 @@ export function PortfolioPage() {
       <div className="border border-border rounded-xl bg-bg/40 overflow-hidden shadow-lg mt-12 mb-12">
         <div className="border-b border-border p-6 flex items-center justify-between bg-bg/80">
           <h2 className="font-sans text-xl font-bold text-primary tracking-tight">SECURE POSITIONS</h2>
-          <button className="rounded border border-accent-safe/30 bg-accent-safe/10 px-6 py-3 font-mono text-[11px] tracking-widest font-bold text-accent-safe hover:bg-accent-safe hover:text-bg hover:shadow-[0_0_15px_rgba(188,255,47,0.3)] transition">
-            + NEW PROPOSAL
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={handleSellAll}
+              disabled={isSellingAll || positions.length === 0}
+              className="rounded border border-accent-danger/30 bg-accent-danger/10 px-6 py-3 font-mono text-[11px] tracking-widest font-bold text-accent-danger hover:bg-accent-danger hover:text-bg hover:shadow-[0_0_15px_rgba(255,50,50,0.3)] transition disabled:opacity-50"
+            >
+              {isSellingAll ? 'SELLING ALL...' : 'EMERGENCY SELL ALL'}
+            </button>
+            <button className="rounded border border-accent-safe/30 bg-accent-safe/10 px-6 py-3 font-mono text-[11px] tracking-widest font-bold text-accent-safe hover:bg-accent-safe hover:text-bg hover:shadow-[0_0_15px_rgba(188,255,47,0.3)] transition">
+              + NEW PROPOSAL
+            </button>
+          </div>
         </div>
         
         {!walletAddress ? (
@@ -78,7 +103,7 @@ export function PortfolioPage() {
             <table className="w-full min-w-[900px] border-collapse">
               <thead>
                 <tr className="border-b border-border bg-[#050505]">
-                  {['Token', 'Amount', 'Entry', 'Current', 'PnL', 'Security', 'Last Check'].map((column) => (
+                  {['Token', 'Amount', 'Entry', 'Current', 'PnL', 'Security', 'Last Check', 'Actions'].map((column) => (
                     <th key={column} className="px-6 py-4 text-left font-mono text-[11px] tracking-widest font-bold uppercase text-secondary">
                       {column}
                     </th>
