@@ -172,6 +172,12 @@ async function runStartupValidation(): Promise<void> {
     return;
   }
 
+  if (env.mainnetDemoEnabled) {
+    console.log('[RUGNOT] Mainnet judge demo enabled. Autonomous Scout buys are paused so the dashboard demo controls all execution.');
+    discoveryEnabled = false;
+    return;
+  }
+
   console.log('[RUGNOT] Live mode enabled. Discovery and defense loops can use real X Layer data.');
   discoveryEnabled = true;
 }

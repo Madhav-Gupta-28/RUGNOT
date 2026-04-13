@@ -159,11 +159,27 @@ function buildTransactionRequest(raw: Record<string, unknown>, fallbackTo: strin
   const hasEip1559 = raw.maxFeePerGas !== undefined || raw.maxPriorityFeePerGas !== undefined;
 
   if (hasEip1559) {
-    if (raw.maxFeePerGas !== undefined) {
-      request.maxFeePerGas = parseTxValue(raw.maxFeePerGas);
+    let maxFeePerGas = raw.maxFeePerGas !== undefined
+      ? parseTxValue(raw.maxFeePerGas)
+      : undefined;
+    let maxPriorityFeePerGas = raw.maxPriorityFeePerGas !== undefined
+      ? parseTxValue(raw.maxPriorityFeePerGas)
+      : undefined;
+
+    if (maxFeePerGas === undefined && maxPriorityFeePerGas !== undefined) {
+      maxFeePerGas = maxPriorityFeePerGas;
     }
-    if (raw.maxPriorityFeePerGas !== undefined) {
-      request.maxPriorityFeePerGas = parseTxValue(raw.maxPriorityFeePerGas);
+
+    if (maxFeePerGas !== undefined && maxPriorityFeePerGas !== undefined && maxPriorityFeePerGas > maxFeePerGas) {
+      console.warn('[Executor] OKX returned maxPriorityFeePerGas > maxFeePerGas; raising maxFeePerGas before signing.');
+      maxFeePerGas = maxPriorityFeePerGas;
+    }
+
+    if (maxFeePerGas !== undefined) {
+      request.maxFeePerGas = maxFeePerGas;
+    }
+    if (maxPriorityFeePerGas !== undefined) {
+      request.maxPriorityFeePerGas = maxPriorityFeePerGas;
     }
     // Explicitly do NOT set gasPrice — mixing it with EIP-1559 fields causes
     // ethers v6 to throw "eip-1559 transaction do not support gasPrice".
