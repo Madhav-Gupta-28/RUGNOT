@@ -148,30 +148,33 @@ If OKX credentials are missing or invalid, RUGNOT starts in demo-safe mode. If c
 The dashboard `RUN REAL MAINNET DEMO` button can run a complete bounded lifecycle on X Layer:
 
 ```text
-Scout selection -> Guardian proof checks -> OKX DEX buy -> Sentinel re-check -> OKX DEX sell back to USDT
+Scout scans 5 OKX-listed X Layer tokens -> Guardian scores each token
+-> Executor buys the top safe candidates -> Sentinel monitors live marks
+-> Auto-Exit sells only the token that trips risk
 ```
 
-This is not the mock demo route. It signs and broadcasts real approval/swap transactions with the agent wallet, then streams each stage to the dashboard and links confirmed hashes to OKLink.
+This is not the mock demo route. It signs and broadcasts real approval/swap transactions with the agent wallet, then streams each stage to the dashboard and links confirmed hashes to OKLink. The default curated basket is `XDOG`, `OEOE`, `FDOG`, `DOGSHIT`, and `TITAN` from the OKX X Layer DEX token list.
 
 Enable it only during a judging window:
 
 ```env
 MAINNET_DEMO_ENABLED=true
 MAINNET_DEMO_PUBLIC=true
-MAINNET_DEMO_TOKEN_ADDRESS=0x74b7f16337b8972027f6196a17a631ac6de26d22
-MAINNET_DEMO_TOKEN_SYMBOL=USDC
+MAINNET_DEMO_CANDIDATES=XDOG:0x0cc24c51bf89c00c5affbfcf5e856c25ecbdb48e,OEOE:0x4c225fb675c0c475b53381463782a7f741d59763,FDOG:0x5839244eab49314bccc0fa76e3a081cb1a461111,DOGSHIT:0x70bf3e2b75d8832d7f790a87fffc1fa9d63dc5bb,TITAN:0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd
 MAINNET_DEMO_AMOUNT_USDT=1
-MAINNET_DEMO_EXIT_DELAY_MS=45000
+MAINNET_DEMO_BUY_COUNT=2
+MAINNET_DEMO_MONITOR_MS=120000
 MAINNET_DEMO_COOLDOWN_MS=300000
 ```
 
 Safety gates:
 
 - Hard cap of `1` USDT per run, also capped by `MAINNET_DEMO_AMOUNT_USDT`.
-- Requires valid OKX API credentials, `PRIVATE_KEY`, OKB gas, and enough USDT in one X Layer USDT contract.
-- Public mode ignores arbitrary token overrides; judges can only run the configured curated token.
+- Requires valid OKX API credentials, `PRIVATE_KEY`, OKB gas, and enough total USDT on X Layer.
+- Public mode ignores arbitrary token overrides; judges can only run the configured curated basket.
 - Normal Scout/Sentinel loops are paused during the controlled proof cycle and restored afterward.
-- The route refuses execution if Guardian's contract, liquidity, or swap-simulation layers cannot prove the token is tradeable.
+- The route refuses execution for any token whose contract, liquidity, or swap-simulation layers cannot prove tradeability.
+- It does not sell every position at the end. Sentinel exits only the token that crosses the live drawdown/downtrend rule; any other tiny demo position remains visible in Portfolio.
 
 ## Safety Controls
 

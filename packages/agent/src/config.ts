@@ -109,7 +109,10 @@ export interface AppEnv {
   publicMainnetDemo: boolean;
   mainnetDemoTokenAddress: string;
   mainnetDemoTokenSymbol: string;
+  mainnetDemoCandidates: string;
   mainnetDemoAmountUsdt: number;
+  mainnetDemoBuyCount: number;
+  mainnetDemoMonitorMs: number;
   mainnetDemoExitDelayMs: number;
   mainnetDemoCooldownMs: number;
   statePersistencePath: string;
@@ -139,6 +142,8 @@ export const agentConfig: AgentConfig = {
   publicMainnetDemo: parseBooleanEnv('MAINNET_DEMO_PUBLIC', false),
   mainnetDemoAmountUsdt: parseNumber('MAINNET_DEMO_AMOUNT_USDT', 1),
   mainnetDemoTokenSymbol: readEnv('MAINNET_DEMO_TOKEN_SYMBOL', 'USDC'),
+  mainnetDemoBuyCount: parseNumber('MAINNET_DEMO_BUY_COUNT', 2),
+  mainnetDemoMonitorMs: parseNumber('MAINNET_DEMO_MONITOR_MS', 120_000),
 };
 
 validateOkxEnv();
@@ -163,7 +168,10 @@ export const env: AppEnv = {
   publicMainnetDemo: parseBooleanEnv('MAINNET_DEMO_PUBLIC', false),
   mainnetDemoTokenAddress: readEnv('MAINNET_DEMO_TOKEN_ADDRESS', '0x74b7f16337b8972027f6196a17a631ac6de26d22'),
   mainnetDemoTokenSymbol: readEnv('MAINNET_DEMO_TOKEN_SYMBOL', 'USDC'),
+  mainnetDemoCandidates: readEnv('MAINNET_DEMO_CANDIDATES'),
   mainnetDemoAmountUsdt: parseNumber('MAINNET_DEMO_AMOUNT_USDT', 1),
+  mainnetDemoBuyCount: parseNumber('MAINNET_DEMO_BUY_COUNT', 2),
+  mainnetDemoMonitorMs: parseNumber('MAINNET_DEMO_MONITOR_MS', 120_000),
   mainnetDemoExitDelayMs: parseNumber('MAINNET_DEMO_EXIT_DELAY_MS', 45_000),
   mainnetDemoCooldownMs: parseNumber('MAINNET_DEMO_COOLDOWN_MS', 300_000),
   statePersistencePath: resolveRuntimePath('STATE_PERSISTENCE_PATH', '.rugnot-state.json'),

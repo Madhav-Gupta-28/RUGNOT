@@ -9,7 +9,7 @@ import { executeOpportunity, executeSell } from './executor.js';
 import {
   XLAYER_TOKENS,
   fetchTokenPrice,
-  getTokenMetadata,
+  getMarketPriceInfo,
   getWalletStableBalances,
   verifyOkxCredentials,
 } from './okx-api.js';
@@ -131,150 +131,368 @@ function isRealEvmAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
 }
 
-async function resolveMainnetDemoToken(
-  req: Request,
-  allowTokenOverride: boolean,
-): Promise<{ tokenAddress: string; tokenSymbol: string; currentPrice: number }> {
-  const bodyAddress = typeof req.body?.tokenAddress === 'string' ? req.body.tokenAddress.trim() : '';
-  const tokenAddress = allowTokenOverride && bodyAddress && isRealEvmAddress(bodyAddress)
-    ? bodyAddress
-    : env.mainnetDemoTokenAddress || XLAYER_TOKENS.USDC;
-  const metadata = await getTokenMetadata(tokenAddress).catch(() => null);
-  const tokenSymbol = allowTokenOverride && typeof req.body?.tokenSymbol === 'string' && req.body.tokenSymbol.trim()
-    ? req.body.tokenSymbol.trim()
-    : metadata?.tokenSymbol || env.mainnetDemoTokenSymbol || 'USDC';
-  const currentPrice = (await fetchTokenPrice(tokenAddress).catch(() => null)
-    ?? Number(metadata?.tokenUnitPrice ?? 0))
-    || 1;
-
-  return { tokenAddress, tokenSymbol, currentPrice };
+function readNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function assertMainnetDemoSafety(verdict: Verdict) {
+interface MainnetDemoCandidate {
+  tokenSymbol: string;
+  tokenAddress: string;
+}
+
+interface MainnetDemoScanResult extends MainnetDemoCandidate {
+  currentPrice: number;
+  change24h: number;
+  verdict: Verdict;
+  accepted: boolean;
+  reason: string;
+}
+
+interface MainnetDemoBoughtPosition extends MainnetDemoScanResult {
+  trade: TradeExecution;
+  beforeAmount: number;
+  entryPrice: number;
+}
+
+const DEFAULT_MAINNET_DEMO_CANDIDATES: MainnetDemoCandidate[] = [
+  { tokenSymbol: 'XDOG', tokenAddress: '0x0cc24c51bf89c00c5affbfcf5e856c25ecbdb48e' },
+  { tokenSymbol: 'OEOE', tokenAddress: '0x4c225fb675c0c475b53381463782a7f741d59763' },
+  { tokenSymbol: 'FDOG', tokenAddress: '0x5839244eab49314bccc0fa76e3a081cb1a461111' },
+  { tokenSymbol: 'DOGSHIT', tokenAddress: '0x70bf3e2b75d8832d7f790a87fffc1fa9d63dc5bb' },
+  { tokenSymbol: 'TITAN', tokenAddress: '0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd' },
+];
+
+function parseCandidateString(raw: string): MainnetDemoCandidate[] {
+  return raw
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [symbol, address] = item.split(/[:=]/).map((part) => part.trim());
+      if (!symbol || !address || !isRealEvmAddress(address)) return null;
+      return { tokenSymbol: symbol.toUpperCase(), tokenAddress: address.toLowerCase() };
+    })
+    .filter((item): item is MainnetDemoCandidate => Boolean(item));
+}
+
+function parseCandidateObjects(value: unknown): MainnetDemoCandidate[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const record = item as Record<string, unknown>;
+      const tokenSymbol = typeof record.tokenSymbol === 'string'
+        ? record.tokenSymbol
+        : typeof record.symbol === 'string'
+          ? record.symbol
+          : '';
+      const tokenAddress = typeof record.tokenAddress === 'string'
+        ? record.tokenAddress
+        : typeof record.address === 'string'
+          ? record.address
+          : '';
+      if (!tokenSymbol || !isRealEvmAddress(tokenAddress)) return null;
+      return { tokenSymbol: tokenSymbol.toUpperCase(), tokenAddress: tokenAddress.toLowerCase() };
+    })
+    .filter((item): item is MainnetDemoCandidate => Boolean(item));
+}
+
+function uniqueCandidates(candidates: MainnetDemoCandidate[]): MainnetDemoCandidate[] {
+  const seen = new Set<string>();
+  const unique: MainnetDemoCandidate[] = [];
+  for (const candidate of candidates) {
+    const key = candidate.tokenAddress.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push({ ...candidate, tokenAddress: key });
+  }
+  return unique;
+}
+
+function getMainnetDemoCandidates(req: Request, allowOverride: boolean): MainnetDemoCandidate[] {
+  const bodyCandidates = allowOverride
+    ? parseCandidateObjects(req.body?.candidates)
+    : [];
+  const envCandidates = env.mainnetDemoCandidates
+    ? parseCandidateString(env.mainnetDemoCandidates)
+    : [];
+  const fallback = env.mainnetDemoTokenAddress && env.mainnetDemoTokenSymbol && env.mainnetDemoTokenSymbol !== 'USDC'
+    ? [{ tokenSymbol: env.mainnetDemoTokenSymbol, tokenAddress: env.mainnetDemoTokenAddress }]
+    : DEFAULT_MAINNET_DEMO_CANDIDATES;
+
+  return uniqueCandidates([
+    ...bodyCandidates,
+    ...(bodyCandidates.length > 0 ? [] : envCandidates),
+    ...(bodyCandidates.length > 0 || envCandidates.length > 0 ? [] : fallback),
+  ]).slice(0, 5);
+}
+
+function evaluateMainnetDemoSafety(verdict: Verdict): { ok: boolean; reason: string } {
   const contractSafety = verdict.checks.find((check) => check.name === 'Contract Safety');
   const simulation = verdict.checks.find((check) => check.name === 'Tx Simulation');
   const liquidity = verdict.checks.find((check) => check.name === 'Liquidity');
-  const executionLayerBlocked = [contractSafety, simulation, liquidity].some((check) => {
-    if (!check) return true;
-    const unavailable = check.reason.toLowerCase().includes('unavailable');
-    return unavailable || !check.passed || check.score <= 0;
-  });
 
-  if (executionLayerBlocked) {
-    throw new Error(`Guardian blocked mainnet demo execution layers with ${verdict.level} score ${verdict.score}.`);
+  for (const check of [contractSafety, liquidity, simulation]) {
+    if (!check) {
+      return { ok: false, reason: 'missing execution-layer check' };
+    }
+    const unavailable = check.reason.toLowerCase().includes('unavailable');
+    if (unavailable || !check.passed || check.score <= 0) {
+      return { ok: false, reason: `${check.name}: ${check.reason}` };
+    }
   }
+
+  if (verdict.level === 'DANGER' || verdict.score < 35) {
+    return { ok: false, reason: `Guardian level ${verdict.level}, score ${verdict.score}` };
+  }
+
+  return { ok: true, reason: `execution layers passed; Guardian ${verdict.level} ${verdict.score}` };
 }
 
 async function runMainnetDemoLifecycle(state: StateStore, params: {
   runId: string;
   amountUsdt: number;
-  tokenAddress: string;
-  tokenSymbol: string;
-  currentPrice: number;
+  candidates: MainnetDemoCandidate[];
   wasPaused: boolean;
 }) {
   try {
+    state.update({
+      recentVerdicts: [],
+      recentTrades: [],
+      recentThreats: [],
+    });
+    state.broadcastState();
+
     emitAgentStep(state, {
-      stage: 'SCOUT',
+      stage: 'DEMO',
       status: 'started',
-      description: `Selected ${params.tokenSymbol} for a controlled ${params.amountUsdt.toFixed(2)} USDT X Layer proof trade.`,
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
+      description: `Judge demo started: scanning ${params.candidates.length} lesser-known OKX X Layer tokens with a ${params.amountUsdt.toFixed(2)} USDT cap.`,
       runId: params.runId,
     });
 
-    const verdict = await vetToken(params.tokenAddress);
-    state.addVerdict(verdict);
-    assertMainnetDemoSafety(verdict);
+    const scanResults: MainnetDemoScanResult[] = [];
+    for (const candidate of params.candidates) {
+      emitAgentStep(state, {
+        stage: 'SCOUT',
+        status: 'running',
+        description: `Scanning ${candidate.tokenSymbol} from the OKX X Layer token list: liquidity, taxes, holder risk, and swap route.`,
+        tokenAddress: candidate.tokenAddress,
+        tokenSymbol: candidate.tokenSymbol,
+        runId: params.runId,
+      });
 
-    emitAgentStep(state, {
-      stage: 'GUARDIAN',
-      status: verdict.level === 'GO' ? 'passed' : 'running',
-      description: `Guardian returned ${verdict.level} ${verdict.score}; route and simulation layers passed, so the curated mainnet proof may execute.`,
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
-      runId: params.runId,
-    });
+      const [price, marketInfo] = await Promise.all([
+        fetchTokenPrice(candidate.tokenAddress).catch(() => null),
+        getMarketPriceInfo([candidate.tokenAddress]).catch(() => []),
+      ]);
+      const currentPrice = (price
+        ?? readNumber(marketInfo[0]?.price, 0))
+        || 0;
+      const change24h = readNumber(marketInfo[0]?.priceChange24H, 0);
+      const verdict = await vetToken(candidate.tokenAddress);
+      state.addVerdict(verdict);
+      const safety = evaluateMainnetDemoSafety(verdict);
+      const result: MainnetDemoScanResult = {
+        ...candidate,
+        currentPrice,
+        change24h,
+        verdict,
+        accepted: safety.ok,
+        reason: safety.reason,
+      };
+      scanResults.push(result);
 
-    const beforePosition = state.get().positions.find((position) => (
-      position.tokenAddress.toLowerCase() === params.tokenAddress.toLowerCase()
-    ));
-    const beforeAmount = beforePosition?.amount ?? 0;
+      emitAgentStep(state, {
+        stage: 'GUARDIAN',
+        status: safety.ok ? 'passed' : 'blocked',
+        description: `${candidate.tokenSymbol}: ${verdict.level} ${verdict.score}. ${safety.reason}. 24h ${change24h.toFixed(2)}%.`,
+        tokenAddress: candidate.tokenAddress,
+        tokenSymbol: candidate.tokenSymbol,
+        runId: params.runId,
+      });
 
-    const opportunity: VettedOpportunity = {
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
-      signalType: 'volume-spike',
-      signalStrength: Math.max(70, verdict.score),
-      currentPrice: params.currentPrice,
-      verdict,
-    };
-
-    const buyTrade = await executeOpportunity(opportunity, state, params.amountUsdt);
-    if (!buyTrade || buyTrade.status !== 'confirmed') {
-      throw new Error('Executor buy did not confirm on X Layer.');
+      await sleep(900);
     }
+
+    const accepted = scanResults.filter((result) => result.accepted);
+    if (accepted.length === 0) {
+      throw new Error('Guardian blocked every curated X Layer demo token. No mainnet buys were sent.');
+    }
+
+    const strongest = [...accepted].sort((a, b) => b.verdict.score - a.verdict.score)[0];
+    const downtrendProbe = [...accepted]
+      .filter((result) => result.tokenAddress !== strongest.tokenAddress)
+      .sort((a, b) => a.change24h - b.change24h)[0];
+    const selected = uniqueCandidates([
+      strongest,
+      ...(downtrendProbe ? [downtrendProbe] : []),
+    ]).map((candidate) => accepted.find((result) => result.tokenAddress === candidate.tokenAddress))
+      .filter((result): result is MainnetDemoScanResult => Boolean(result))
+      .slice(0, Math.max(1, Math.min(env.mainnetDemoBuyCount, accepted.length)));
+    const amountPerBuy = Math.max(0.1, params.amountUsdt / selected.length);
+    const bought: MainnetDemoBoughtPosition[] = [];
 
     emitAgentStep(state, {
       stage: 'EXECUTOR',
-      status: 'executed',
-      description: `Bought ${params.tokenSymbol} through OKX DEX Aggregator v6. TX ${buyTrade.txHash ? buyTrade.txHash.slice(0, 10) : 'pending'}.`,
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
-      txHash: buyTrade.txHash,
+      status: 'running',
+      description: `Selected ${selected.map((item) => item.tokenSymbol).join(' + ')}. Buying ${amountPerBuy.toFixed(2)} USDT each so the portfolio page shows real positions.`,
       runId: params.runId,
     });
 
-    await sleep(env.mainnetDemoExitDelayMs);
+    for (const candidate of selected) {
+      const beforePosition = state.get().positions.find((position) => (
+        position.tokenAddress.toLowerCase() === candidate.tokenAddress.toLowerCase()
+      ));
+      const beforeAmount = beforePosition?.amount ?? 0;
+      const opportunity: VettedOpportunity = {
+        tokenAddress: candidate.tokenAddress,
+        tokenSymbol: candidate.tokenSymbol,
+        signalType: 'volume-spike',
+        signalStrength: Math.max(70, candidate.verdict.score),
+        currentPrice: candidate.currentPrice || 1,
+        verdict: candidate.verdict,
+      };
 
-    const latestPosition = state.get().positions.find((position) => (
-      position.tokenAddress.toLowerCase() === params.tokenAddress.toLowerCase()
-    ));
-    if (!latestPosition) {
-      throw new Error('Demo position disappeared before Sentinel exit.');
+      const buyTrade = await executeOpportunity(opportunity, state, amountPerBuy);
+      if (!buyTrade || buyTrade.status !== 'confirmed') {
+        emitAgentStep(state, {
+          stage: 'EXECUTOR',
+          status: 'failed',
+          description: `${candidate.tokenSymbol} buy did not confirm; continuing demo with remaining candidates.`,
+          tokenAddress: candidate.tokenAddress,
+          tokenSymbol: candidate.tokenSymbol,
+          runId: params.runId,
+        });
+        continue;
+      }
+
+      bought.push({
+        ...candidate,
+        trade: buyTrade,
+        beforeAmount,
+        entryPrice: candidate.currentPrice || (buyTrade.amountIn / Math.max(buyTrade.amountOut, 0.000001)),
+      });
+      emitAgentStep(state, {
+        stage: 'EXECUTOR',
+        status: 'executed',
+        description: `Bought ${candidate.tokenSymbol} with ${amountPerBuy.toFixed(2)} USDT through OKX DEX Aggregator v6.`,
+        tokenAddress: candidate.tokenAddress,
+        tokenSymbol: candidate.tokenSymbol,
+        txHash: buyTrade.txHash,
+        runId: params.runId,
+      });
+      await sleep(5_000);
     }
 
-    const demoAmount = Math.max(0, latestPosition.amount - beforeAmount);
-    if (demoAmount <= 0) {
-      throw new Error('No demo-acquired token amount available to sell.');
+    if (bought.length === 0) {
+      throw new Error('No curated X Layer token buy confirmed. Check OKX route/allowance/gas logs.');
     }
 
-    const exitVerdict = await vetToken(params.tokenAddress, 'exit');
-    state.addVerdict(exitVerdict);
     emitAgentStep(state, {
       stage: 'SENTINEL',
       status: 'running',
-      description: `Sentinel rechecked ${params.tokenSymbol} and is closing the proof cycle back to USDT.`,
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
+      description: `Monitoring ${bought.map((item) => item.tokenSymbol).join(' + ')} for ${Math.round(env.mainnetDemoMonitorMs / 1000)}s. Only the token that trips risk will be sold.`,
       runId: params.runId,
     });
 
-    const alert: ThreatAlert = {
-      id: uuidv4(),
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
-      threatType: 'demo-exit',
-      severity: 'medium',
-      description: 'Mainnet demo lifecycle complete. Sentinel is returning demo capital to USDT.',
-      action: 'auto-exit',
-      timestamp: Date.now(),
-    };
+    const sold = new Set<string>();
+    const rounds = Math.max(3, Math.min(5, Math.round(env.mainnetDemoMonitorMs / 25_000)));
+    const roundDelayMs = Math.max(15_000, Math.floor(env.mainnetDemoMonitorMs / rounds));
 
-    const exitResult = await triggerAutoExit(state, latestPosition, alert, exitVerdict, demoAmount);
-    state.addThreat(exitResult.alert);
+    for (let round = 1; round <= rounds; round += 1) {
+      await sleep(roundDelayMs);
+      for (const item of bought) {
+        if (sold.has(item.tokenAddress)) continue;
+        const livePosition = state.get().positions.find((position) => (
+          position.tokenAddress.toLowerCase() === item.tokenAddress.toLowerCase()
+        ));
+        if (!livePosition) continue;
 
-    if (exitResult.trade.status !== 'confirmed') {
-      throw new Error('Sentinel exit transaction did not confirm on X Layer.');
+        const [latestPrice, marketInfo] = await Promise.all([
+          fetchTokenPrice(item.tokenAddress).catch(() => null),
+          getMarketPriceInfo([item.tokenAddress]).catch(() => []),
+        ]);
+        const currentPrice = (latestPrice
+          ?? readNumber(marketInfo[0]?.price, livePosition.currentPrice))
+          || livePosition.currentPrice;
+        const pnlPercent = item.entryPrice > 0
+          ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100
+          : 0;
+        const change24h = readNumber(marketInfo[0]?.priceChange24H, item.change24h);
+        state.upsertPosition({
+          ...livePosition,
+          currentPrice,
+          pnlPercent,
+          pnlUsd: (currentPrice - livePosition.entryPrice) * livePosition.amount,
+        });
+
+        const liveDrawdown = pnlPercent <= -0.15;
+        const downtrendExit = round >= 2 && change24h <= -3;
+        const shouldExit = sold.size === 0 && (liveDrawdown || downtrendExit);
+        emitAgentStep(state, {
+          stage: 'SENTINEL',
+          status: shouldExit ? 'blocked' : 'running',
+          description: shouldExit
+            ? `${item.tokenSymbol} risk tripped: entry PnL ${pnlPercent.toFixed(2)}%, 24h ${change24h.toFixed(2)}%. Selling only this token.`
+            : `${item.tokenSymbol} hold: entry PnL ${pnlPercent.toFixed(2)}%, 24h ${change24h.toFixed(2)}%, Guardian route still monitored.`,
+          tokenAddress: item.tokenAddress,
+          tokenSymbol: item.tokenSymbol,
+          runId: params.runId,
+        });
+
+        if (!shouldExit) continue;
+
+        const currentPosition = state.get().positions.find((position) => (
+          position.tokenAddress.toLowerCase() === item.tokenAddress.toLowerCase()
+        ));
+        if (!currentPosition) continue;
+        const demoAmount = Math.max(0, currentPosition.amount - item.beforeAmount);
+        if (demoAmount <= 0) continue;
+
+        const exitVerdict = await vetToken(item.tokenAddress, 'exit');
+        state.addVerdict(exitVerdict);
+        const alert: ThreatAlert = {
+          id: uuidv4(),
+          tokenAddress: item.tokenAddress,
+          tokenSymbol: item.tokenSymbol,
+          threatType: 'price-crash',
+          severity: liveDrawdown ? 'high' : 'medium',
+          description: `${item.tokenSymbol} crossed Sentinel demo exit rule: entry PnL ${pnlPercent.toFixed(2)}%, 24h ${change24h.toFixed(2)}%.`,
+          action: 'auto-exit',
+          timestamp: Date.now(),
+        };
+        const exitResult = await triggerAutoExit(state, currentPosition, alert, exitVerdict, demoAmount);
+        state.addThreat(exitResult.alert);
+        if (exitResult.trade.status === 'confirmed') {
+          sold.add(item.tokenAddress);
+          emitAgentStep(state, {
+            stage: 'AUTO_EXIT',
+            status: 'executed',
+            description: `Sold ${item.tokenSymbol} only. Remaining demo positions stay visible for portfolio and Sentinel views.`,
+            tokenAddress: item.tokenAddress,
+            tokenSymbol: item.tokenSymbol,
+            txHash: exitResult.trade.txHash,
+            runId: params.runId,
+          });
+        } else {
+          emitAgentStep(state, {
+            stage: 'AUTO_EXIT',
+            status: 'failed',
+            description: `${item.tokenSymbol} exit did not confirm. Position remains visible for manual sell.`,
+            tokenAddress: item.tokenAddress,
+            tokenSymbol: item.tokenSymbol,
+            txHash: exitResult.trade.txHash,
+            runId: params.runId,
+          });
+        }
+      }
     }
 
     emitAgentStep(state, {
-      stage: 'AUTO_EXIT',
+      stage: 'DEMO',
       status: 'complete',
-      description: `Sold demo ${params.tokenSymbol} back to USDT. Full mainnet lifecycle complete.`,
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
-      txHash: exitResult.trade.txHash,
+      description: `Mainnet demo complete: scanned ${scanResults.length}, bought ${bought.length}, sold ${sold.size}. Unsold positions remain open for portfolio review.`,
       runId: params.runId,
     });
   } catch (error) {
@@ -282,8 +500,6 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
       stage: 'DEMO',
       status: 'failed',
       description: error instanceof Error ? error.message : 'Mainnet demo cycle failed.',
-      tokenAddress: params.tokenAddress,
-      tokenSymbol: params.tokenSymbol,
       runId: params.runId,
     });
   } finally {
@@ -424,22 +640,19 @@ export function createApiRouter(state: StateStore): Router {
     const balances = await getWalletStableBalances(state.get().walletAddress);
     state.setWalletBalance(balances.totalUsdt);
 
-    if (balances.okb <= 0 || Math.max(balances.usdt, balances.legacyUsdt) < amountUsdt) {
+    if (balances.okb <= 0 || balances.totalUsdt < amountUsdt) {
       return res.status(409).json({
         error: 'insufficient_demo_funds',
-        message: `Need OKB gas and at least ${amountUsdt.toFixed(2)} USDT in one X Layer USDT contract.`,
+        message: `Need OKB gas and at least ${amountUsdt.toFixed(2)} total USDT on X Layer.`,
         balances,
       });
     }
 
-    const token = await resolveMainnetDemoToken(req, !env.publicMainnetDemo && isAdminAuthorized(req));
-    const existingDemoTokenPosition = state.get().positions.find((position) => (
-      position.tokenAddress.toLowerCase() === token.tokenAddress.toLowerCase()
-    ));
-    if (existingDemoTokenPosition && existingDemoTokenPosition.amount > 0 && !req.body?.allowExistingPosition) {
-      return res.status(409).json({
-        error: 'demo_token_already_held',
-        message: `Wallet already holds ${existingDemoTokenPosition.tokenSymbol}. Sell it first or send allowExistingPosition=true.`,
+    const candidates = getMainnetDemoCandidates(req, !env.publicMainnetDemo && isAdminAuthorized(req));
+    if (candidates.length === 0) {
+      return res.status(400).json({
+        error: 'no_demo_candidates',
+        message: 'No valid X Layer demo candidates configured.',
       });
     }
 
@@ -452,9 +665,7 @@ export function createApiRouter(state: StateStore): Router {
     void runMainnetDemoLifecycle(state, {
       runId,
       amountUsdt,
-      tokenAddress: token.tokenAddress,
-      tokenSymbol: token.tokenSymbol,
-      currentPrice: token.currentPrice,
+      candidates,
       wasPaused,
     });
 
@@ -463,10 +674,9 @@ export function createApiRouter(state: StateStore): Router {
       mode: 'real-mainnet',
       runId,
       amountUsdt,
-      tokenAddress: token.tokenAddress,
-      tokenSymbol: token.tokenSymbol,
-      estimatedDurationMs: env.mainnetDemoExitDelayMs + 90_000,
-      message: 'Real X Layer demo cycle started. Watch Live Feed and Trade Ledger for OKLink tx hashes.',
+      candidates,
+      estimatedDurationMs: env.mainnetDemoMonitorMs + 120_000,
+      message: 'Real X Layer demo started: scanning curated tokens, buying safe candidates, then Sentinel monitors for selective exits.',
     });
   });
 

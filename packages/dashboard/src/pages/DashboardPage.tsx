@@ -45,10 +45,10 @@ type DemoStatus = 'idle' | 'running' | 'done' | 'error';
 interface MainnetDemoResponse {
   ok: boolean;
   estimatedDurationMs: number;
-  tokenSymbol: string;
   amountUsdt: number;
   message: string;
   runId: string;
+  candidates: Array<{ tokenSymbol: string; tokenAddress: string }>;
 }
 
 export function DashboardPage() {
@@ -185,7 +185,7 @@ export function DashboardPage() {
             </Link>
           </div>
           <div className="mt-4 max-w-2xl font-mono text-[10px] leading-relaxed text-secondary">
-            Real demo: {state.config.mainnetDemoAmountUsdt.toFixed(2)} USDT → {state.config.mainnetDemoTokenSymbol} → USDT on X Layer. Admin protected unless `MAINNET_DEMO_PUBLIC=true`.
+            Real demo: scan 5 OKX X Layer tokens, buy up to {state.config.mainnetDemoBuyCount} with a {state.config.mainnetDemoAmountUsdt.toFixed(2)} USDT cap, monitor for {Math.round(state.config.mainnetDemoMonitorMs / 1000)}s, and sell only the token that trips Sentinel.
             {demoError ? <span className="ml-2 text-accent-danger">{demoError}</span> : null}
           </div>
         </div>

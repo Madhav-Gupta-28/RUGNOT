@@ -32,7 +32,9 @@ const initialState: AgentState = {
     mainnetDemoEnabled: false,
     publicMainnetDemo: false,
     mainnetDemoAmountUsdt: 1,
-    mainnetDemoTokenSymbol: 'USDC',
+    mainnetDemoTokenSymbol: 'XDOG/FDOG',
+    mainnetDemoBuyCount: 2,
+    mainnetDemoMonitorMs: 120_000,
   },
 };
 

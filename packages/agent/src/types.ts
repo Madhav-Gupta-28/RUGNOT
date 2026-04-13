@@ -114,6 +114,8 @@ export interface AgentConfig {
   publicMainnetDemo: boolean;
   mainnetDemoAmountUsdt: number;
   mainnetDemoTokenSymbol: string;
+  mainnetDemoBuyCount: number;
+  mainnetDemoMonitorMs: number;
 }
 
 export interface WsEvent {
