@@ -5,6 +5,7 @@ import { env } from './config.js';
 import {
   DEFAULT_SLIPPAGE,
   XLAYER_TOKENS,
+  XLAYER_RPC_FALLBACK,
   fromBaseUnits,
   getAggregatorQuote,
   getAggregatorSwapData,
@@ -37,6 +38,11 @@ const ERC20_BALANCE_ABI = [
 // of the transactions will revert with "nonce too low". We serialise every
 // write the signer performs with this simple chained-promise mutex.
 let nonceMutex: Promise<void> = Promise.resolve();
+let nextManagedNonce: number | null = null;
+let managedNonceAddress = '';
+
+const XLAYER_MIN_GAS_PRICE_WEI = 20_000_000n;
+const FEE_FLOOR_MULTIPLIER = 3n;
 
 async function withNonceMutex<T>(fn: () => Promise<T>): Promise<T> {
   const prior = nonceMutex;
@@ -52,12 +58,131 @@ async function withNonceMutex<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+async function readRpcNonce(url: string, address: string, blockTag: 'latest' | 'pending'): Promise<number | null> {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getTransactionCount',
+        params: [address, blockTag],
+      }),
+    });
+    const json = await response.json() as { result?: string };
+    return typeof json.result === 'string' ? Number.parseInt(json.result, 16) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readBestNetworkNonce(address: string): Promise<{ latest: number; pending: number }> {
+  const rpcUrls = [...new Set([env.rpcUrl, XLAYER_RPC_FALLBACK].filter(Boolean))];
+  const [latestValues, pendingValues] = await Promise.all([
+    Promise.all(rpcUrls.map((url) => readRpcNonce(url, address, 'latest'))),
+    Promise.all(rpcUrls.map((url) => readRpcNonce(url, address, 'pending'))),
+  ]);
+  const provider = getProvider();
+  const providerLatest = await provider.getTransactionCount(address, 'latest').catch(() => 0);
+  const providerPending = await provider.getTransactionCount(address, 'pending').catch(() => providerLatest);
+  const latest = Math.max(providerLatest, ...latestValues.filter((value): value is number => value !== null));
+  const pending = Math.max(latest, providerPending, ...pendingValues.filter((value): value is number => value !== null));
+  return { latest, pending };
+}
+
+async function reserveNonce(signer: ethers.Wallet): Promise<number> {
+  const address = (await signer.getAddress()).toLowerCase();
+  const { latest, pending } = await readBestNetworkNonce(address);
+
+  if (managedNonceAddress !== address) {
+    managedNonceAddress = address;
+    nextManagedNonce = null;
+  }
+
+  if (pending > latest) {
+    console.warn(`[Executor] Wallet has ${pending - latest} pending transaction(s); appending at nonce ${pending}.`);
+  }
+
+  const nonce = nextManagedNonce === null
+    ? pending
+    : Math.max(nextManagedNonce, pending);
+  nextManagedNonce = nonce + 1;
+  return nonce;
+}
+
+function resetManagedNonce() {
+  nextManagedNonce = null;
+}
+
+function isReplacementUnderpriced(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const maybe = error as { code?: unknown; message?: unknown; shortMessage?: unknown; info?: { error?: { message?: unknown } } };
+  const text = [
+    maybe.code,
+    maybe.message,
+    maybe.shortMessage,
+    maybe.info?.error?.message,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return text.includes('replacement') && (text.includes('underpriced') || text.includes('fee too low'));
+}
+
+function maxBigInt(...values: Array<bigint | undefined>): bigint {
+  return values.reduce<bigint>((max, value) => (
+    value !== undefined && value > max ? value : max
+  ), 0n);
+}
+
+async function getFeeFloor(attempt: number): Promise<bigint> {
+  const feeData = await getProvider().getFeeData().catch(() => null);
+  const networkFee = maxBigInt(
+    feeData?.maxFeePerGas ?? undefined,
+    feeData?.gasPrice ?? undefined,
+    XLAYER_MIN_GAS_PRICE_WEI,
+  );
+  return networkFee * FEE_FLOOR_MULTIPLIER * (2n ** BigInt(attempt));
+}
+
+async function applyFeePolicy(request: ethers.TransactionRequest, attempt: number): Promise<ethers.TransactionRequest> {
+  const feeFloor = await getFeeFloor(attempt);
+  const next: ethers.TransactionRequest = { ...request };
+  const hasEip1559 = next.maxFeePerGas !== undefined || next.maxPriorityFeePerGas !== undefined;
+
+  if (hasEip1559) {
+    const priorityFee = maxBigInt(next.maxPriorityFeePerGas as bigint | undefined, feeFloor);
+    const maxFee = maxBigInt(next.maxFeePerGas as bigint | undefined, priorityFee, feeFloor);
+    next.maxPriorityFeePerGas = priorityFee;
+    next.maxFeePerGas = maxFee;
+    delete next.gasPrice;
+    return next;
+  }
+
+  next.gasPrice = maxBigInt(next.gasPrice as bigint | undefined, feeFloor);
+  return next;
+}
+
+async function canExecuteTransaction(signer: ethers.Wallet, request: ethers.TransactionRequest): Promise<boolean> {
+  try {
+    await getProvider().call({
+      ...request,
+      from: await signer.getAddress(),
+    });
+    return true;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[Executor] Swap transaction failed preflight eth_call; skipping broadcast. ${reason.slice(0, 240)}`);
+    return false;
+  }
+}
+
 // Timeout wrapper for tx.wait() - without this, a stuck transaction can hang
 // the Scout or Sentinel loop for the full default ethers timeout (~hours).
 // On X Layer we expect ~2-4s finality, so 90s is generous.
 const TX_WAIT_TIMEOUT_MS = 90_000;
 
-async function waitForTxWithTimeout(tx: ethers.TransactionResponse): Promise<string | null> {
+async function waitForTxWithTimeout(tx: ethers.TransactionResponse): Promise<TradeExecution['status']> {
   try {
     const receipt = await Promise.race([
       tx.wait(1),
@@ -65,12 +190,12 @@ async function waitForTxWithTimeout(tx: ethers.TransactionResponse): Promise<str
     ]);
     if (!receipt) {
       console.error(`[Executor] Transaction ${tx.hash} not confirmed within ${TX_WAIT_TIMEOUT_MS}ms`);
-      return null;
+      return 'pending';
     }
-    return receipt.hash ?? tx.hash;
+    return receipt.status === 1 ? 'confirmed' : 'failed';
   } catch (error) {
     console.error('[Executor] tx.wait failed:', error);
-    return null;
+    return 'failed';
   }
 }
 
@@ -190,16 +315,40 @@ function buildTransactionRequest(raw: Record<string, unknown>, fallbackTo: strin
   return request;
 }
 
-async function sendRawTransaction(rawTx: Record<string, unknown>, fallbackTo: string): Promise<string | null> {
+async function sendRawTransaction(rawTx: Record<string, unknown>, fallbackTo: string): Promise<{ txHash: string; status: TradeExecution['status'] } | null> {
   const signer = getSigner();
   if (!signer) {
     return null;
   }
 
   return withNonceMutex(async () => {
-    const tx = await signer.sendTransaction(buildTransactionRequest(rawTx, fallbackTo));
-    return await waitForTxWithTimeout(tx);
+    const baseRequest = buildTransactionRequest(rawTx, fallbackTo);
+    baseRequest.nonce = await reserveNonce(signer);
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const request = await applyFeePolicy(baseRequest, attempt);
+      try {
+        if (!await canExecuteTransaction(signer, request)) {
+          resetManagedNonce();
+          return null;
+        }
+        const tx = await signer.sendTransaction(request);
+        const status = await waitForTxWithTimeout(tx);
+        return { txHash: tx.hash, status };
+      } catch (error) {
+        lastError = error;
+        if (isReplacementUnderpriced(error) && attempt < 2) {
+          console.warn(`[Executor] Replacement fee too low for nonce ${String(baseRequest.nonce)}; retrying with higher X Layer gas.`);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Raw transaction failed');
   }).catch((error) => {
+    resetManagedNonce();
     console.error('[Executor] Raw transaction failed:', error);
     return null;
   });
@@ -262,16 +411,16 @@ async function executeRawRestSwap(params: {
     return null;
   }
 
-  const txHash = await sendRawTransaction(rawTx, rawTx.to as string);
-  if (!txHash) {
+  const txResult = await sendRawTransaction(rawTx, rawTx.to as string);
+  if (!txResult || txResult.status === 'failed') {
     return null;
   }
 
   return {
     amountOut: fromBaseUnits(swapData.toTokenAmount ?? quote.toTokenAmount, params.toDecimals),
-    txHash,
-    status: 'confirmed',
-    raw: { quote, swapData, explorerUrl: getExplorerUrl(txHash) },
+    txHash: txResult.txHash,
+    status: txResult.status,
+    raw: { quote, swapData, explorerUrl: getExplorerUrl(txResult.txHash) },
   };
 }
 

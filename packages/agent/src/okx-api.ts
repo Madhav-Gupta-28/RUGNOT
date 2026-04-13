@@ -96,11 +96,11 @@ function hasLiveCredentials(): boolean {
 }
 
 // Simple token-bucket rate limiter so we don't burst past OKX's REST limits.
-// OKX caps public DEX endpoints somewhere in the 5-10 req/s range per API key.
-// 5 requests per second with a burst of 10 is conservative enough to survive
-// all three loops (Scout, Sentinel, x402 /api/v1/security/check) running concurrently.
-const RATE_LIMIT_CAPACITY = 10;
-const RATE_LIMIT_REFILL_PER_SEC = 5;
+// OKX caps DEX endpoints aggressively per API key / IP. The judge demo makes
+// many signed market + aggregator calls in a short burst, so we keep this
+// intentionally conservative and let retry/backoff absorb temporary 429s.
+const RATE_LIMIT_CAPACITY = 2;
+const RATE_LIMIT_REFILL_PER_SEC = 1;
 let rateLimitTokens = RATE_LIMIT_CAPACITY;
 let rateLimitLastRefill = Date.now();
 
@@ -206,6 +206,7 @@ export async function callOkxRest<T>(
   const bodyStr = body ? JSON.stringify(body) : '';
 
   for (let attempt = 0; attempt < retries; attempt += 1) {
+    let statusCode = 0;
     await acquireRateLimitToken();
     try {
       const timestamp = new Date().toISOString();
@@ -224,6 +225,7 @@ export async function callOkxRest<T>(
       }).finally(() => clearTimeout(timeout));
 
       if (!response.ok) {
+        statusCode = response.status;
         if (logErrors) {
           console.error(`[OKX REST] ${response.status} ${method} ${requestPath}${queryString}`);
         }
@@ -243,7 +245,10 @@ export async function callOkxRest<T>(
     }
 
     if (attempt < retries - 1) {
-      await sleep(1000 * (2 ** attempt));
+      const backoffMs = statusCode === 429
+        ? 5_000 * (attempt + 1)
+        : 1000 * (2 ** attempt);
+      await sleep(backoffMs);
     }
   }
 
@@ -522,7 +527,12 @@ export async function callOkxApi<T>(
 }
 
 export function toBaseUnits(amount: number, decimals: number): string {
-  return ethers.parseUnits(String(Math.max(0, amount)), decimals).toString();
+  const safeAmount = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+  const decimalAmount = safeAmount.toLocaleString('en-US', {
+    useGrouping: false,
+    maximumFractionDigits: decimals,
+  });
+  return ethers.parseUnits(decimalAmount, decimals).toString();
 }
 
 export function fromBaseUnits(amount: string | number | bigint, decimals: number): number {
@@ -734,7 +744,10 @@ export async function fetchWalletBalances(walletAddress: string): Promise<{ wall
         lastVerdictLevel: 'CAUTION',
       } satisfies Position;
     })))
-    .filter((position) => position.amount > 0);
+    .filter((position) => (
+      position.amount > 1e-10
+      && (position.currentPrice <= 0 || position.amount * position.currentPrice >= 0.005)
+    ));
 
   return { walletBalance: balances.usdt, positions };
 }

@@ -54,76 +54,95 @@ interface MainnetDemoResponse {
 export function DashboardPage() {
   const state = useRugnotStore((store) => store.state);
   const events = useRugnotStore((store) => store.events);
+  const demoRun = useRugnotStore((store) => store.demoRun);
+  const setDemoRun = useRugnotStore((store) => store.setDemoRun);
   const portfolioValue = state.positions.reduce((sum, position) => sum + position.amount * position.currentPrice, 0);
   const dangerVerdicts = state.recentVerdicts.filter((verdict) => verdict.level === 'DANGER').length;
-  const [demoStatus, setDemoStatus] = useState<DemoStatus>('idle');
-  const [demoCountdown, setDemoCountdown] = useState(0);
-  const [demoError, setDemoError] = useState('');
-  const [activeRunId, setActiveRunId] = useState('');
-
-  const startCountdown = (seconds: number) => {
-    setDemoCountdown(seconds);
-    const interval = setInterval(() => {
-      setDemoCountdown((c) => {
-        if (c <= 1) {
-          clearInterval(interval);
-          setDemoStatus((current) => current === 'running' ? 'done' : current);
-          return 0;
-        }
-        return c - 1;
-      });
-    }, 1000);
-  };
+  const [now, setNow] = useState(Date.now());
+  const demoStatus: DemoStatus = demoRun.status;
+  const demoCountdown = demoStatus === 'running'
+    ? Math.max(0, Math.ceil((demoRun.endsAt - now) / 1000))
+    : 0;
 
   const triggerMainnetDemo = async () => {
     if (demoStatus === 'running') return;
-    setDemoError('');
-    setDemoStatus('running');
+    setDemoRun({
+      status: 'running',
+      activeRunId: '',
+      endsAt: 0,
+      error: '',
+    });
     try {
       const response = await apiPost<MainnetDemoResponse>('/api/demo/mainnet-cycle', {
         amountUsdt: state.config.mainnetDemoAmountUsdt,
       });
-      setActiveRunId(response.runId);
-      startCountdown(Math.ceil(response.estimatedDurationMs / 1000));
+      setDemoRun({
+        status: 'running',
+        activeRunId: response.runId,
+        endsAt: Date.now() + response.estimatedDurationMs,
+        error: '',
+      });
     } catch (error) {
-      setDemoError(error instanceof Error ? error.message : 'Mainnet demo failed');
-      setDemoStatus('error');
+      setDemoRun({
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Mainnet demo failed',
+      });
     }
   };
 
   const triggerMockDemo = async () => {
     if (demoStatus === 'running') return;
-    setDemoError('');
-    setDemoStatus('running');
+    setDemoRun({
+      status: 'running',
+      activeRunId: '',
+      endsAt: Date.now() + 120_000,
+      error: '',
+    });
     try {
       await apiPost('/api/demo/trigger', {});
-      setActiveRunId('');
-      startCountdown(120);
     } catch (error) {
-      setDemoError(error instanceof Error ? error.message : 'Mock demo failed');
-      setDemoStatus('error');
+      setDemoRun({
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Mock demo failed',
+      });
     }
   };
 
   useEffect(() => {
-    if (!activeRunId || demoStatus !== 'running') return;
+    if (demoStatus !== 'running') return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [demoStatus]);
+
+  useEffect(() => {
+    if (demoStatus !== 'running' || demoRun.endsAt <= 0 || now < demoRun.endsAt) return;
+    setDemoRun({ status: 'done', endsAt: 0 });
+  }, [demoRun.endsAt, demoStatus, now, setDemoRun]);
+
+  useEffect(() => {
+    if (!demoRun.activeRunId || demoStatus !== 'running') return;
     const latestStep = events.find((event) => {
       if (event.type !== 'agent-step' || typeof event.data !== 'object' || event.data === null) {
         return false;
       }
-      return (event.data as Partial<AgentStepEvent>).runId === activeRunId;
+      return (event.data as Partial<AgentStepEvent>).runId === demoRun.activeRunId;
     });
     if (!latestStep || typeof latestStep.data !== 'object' || latestStep.data === null) return;
     const step = latestStep.data as AgentStepEvent;
-    if (step.status === 'failed' || step.status === 'blocked') {
-      setDemoError(step.description);
-      setDemoStatus('error');
+    if (step.status === 'failed') {
+      setDemoRun({
+        status: 'error',
+        error: step.description,
+      });
     }
-    if (step.stage === 'AUTO_EXIT' && step.status === 'complete') {
-      setDemoStatus('done');
-      setDemoCountdown(0);
+    if (step.stage === 'DEMO' && step.status === 'complete') {
+      setDemoRun({
+        status: 'done',
+        endsAt: 0,
+        error: '',
+      });
     }
-  }, [activeRunId, demoStatus, events]);
+  }, [demoRun.activeRunId, demoStatus, events, setDemoRun]);
   
   return (
     <div className="mx-auto max-w-7xl space-y-12">
@@ -186,7 +205,7 @@ export function DashboardPage() {
           </div>
           <div className="mt-4 max-w-2xl font-mono text-[10px] leading-relaxed text-secondary">
             Real demo: scan 5 OKX X Layer tokens, buy up to {state.config.mainnetDemoBuyCount} with a {state.config.mainnetDemoAmountUsdt.toFixed(2)} USDT cap, monitor for {Math.round(state.config.mainnetDemoMonitorMs / 1000)}s, and sell only the token that trips Sentinel.
-            {demoError ? <span className="ml-2 text-accent-danger">{demoError}</span> : null}
+            {demoRun.error ? <span className="ml-2 text-accent-danger">{demoRun.error}</span> : null}
           </div>
         </div>
       </section>

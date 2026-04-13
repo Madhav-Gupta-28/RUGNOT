@@ -320,6 +320,14 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
       throw new Error('Guardian blocked every curated X Layer demo token. No mainnet buys were sent.');
     }
 
+    const desiredBuyCount = Math.max(
+      1,
+      Math.min(
+        env.mainnetDemoBuyCount,
+        accepted.length,
+        Math.max(1, Math.floor(params.amountUsdt / 0.1)),
+      ),
+    );
     const strongest = [...accepted].sort((a, b) => b.verdict.score - a.verdict.score)[0];
     const downtrendProbe = [...accepted]
       .filter((result) => result.tokenAddress !== strongest.tokenAddress)
@@ -327,20 +335,25 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
     const selected = uniqueCandidates([
       strongest,
       ...(downtrendProbe ? [downtrendProbe] : []),
+      ...[...accepted].sort((a, b) => b.verdict.score - a.verdict.score),
     ]).map((candidate) => accepted.find((result) => result.tokenAddress === candidate.tokenAddress))
       .filter((result): result is MainnetDemoScanResult => Boolean(result))
-      .slice(0, Math.max(1, Math.min(env.mainnetDemoBuyCount, accepted.length)));
-    const amountPerBuy = Math.max(0.1, params.amountUsdt / selected.length);
+      .slice(0, accepted.length);
+    const amountPerBuy = Math.max(0.1, params.amountUsdt / desiredBuyCount);
     const bought: MainnetDemoBoughtPosition[] = [];
 
     emitAgentStep(state, {
       stage: 'EXECUTOR',
       status: 'running',
-      description: `Selected ${selected.map((item) => item.tokenSymbol).join(' + ')}. Buying ${amountPerBuy.toFixed(2)} USDT each so the portfolio page shows real positions.`,
+      description: `Selected ${selected.map((item) => item.tokenSymbol).join(' + ')}. Buying up to ${desiredBuyCount} token(s) at ${amountPerBuy.toFixed(2)} USDT each so the portfolio page shows real positions.`,
       runId: params.runId,
     });
 
     for (const candidate of selected) {
+      if (bought.length >= desiredBuyCount) {
+        break;
+      }
+
       const beforePosition = state.get().positions.find((position) => (
         position.tokenAddress.toLowerCase() === candidate.tokenAddress.toLowerCase()
       ));
@@ -355,7 +368,7 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
       };
 
       const buyTrade = await executeOpportunity(opportunity, state, amountPerBuy);
-      if (!buyTrade || buyTrade.status !== 'confirmed') {
+      if (!buyTrade || (buyTrade.status !== 'confirmed' && buyTrade.status !== 'pending')) {
         emitAgentStep(state, {
           stage: 'EXECUTOR',
           status: 'failed',
@@ -376,7 +389,7 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
       emitAgentStep(state, {
         stage: 'EXECUTOR',
         status: 'executed',
-        description: `Bought ${candidate.tokenSymbol} with ${amountPerBuy.toFixed(2)} USDT through OKX DEX Aggregator v6.`,
+        description: `${buyTrade.status === 'confirmed' ? 'Bought' : 'Broadcast'} ${candidate.tokenSymbol} with ${amountPerBuy.toFixed(2)} USDT through OKX DEX Aggregator v6.`,
         tokenAddress: candidate.tokenAddress,
         tokenSymbol: candidate.tokenSymbol,
         txHash: buyTrade.txHash,

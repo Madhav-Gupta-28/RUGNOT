@@ -3,6 +3,15 @@ import { create } from 'zustand';
 import { apiGet } from './lib/api';
 import type { AgentState, WsEvent } from './lib/types';
 
+type DemoStatus = 'idle' | 'running' | 'done' | 'error';
+
+interface DemoRunState {
+  status: DemoStatus;
+  activeRunId: string;
+  endsAt: number;
+  error: string;
+}
+
 const initialState: AgentState = {
   isRunning: false,
   isPaused: false,
@@ -41,16 +50,24 @@ const initialState: AgentState = {
 interface RugnotStore {
   state: AgentState;
   events: WsEvent[];
+  demoRun: DemoRunState;
   isLoading: boolean;
   error: string | null;
   addEvent: (event: WsEvent) => void;
   updateState: (partial: Partial<AgentState>) => void;
+  setDemoRun: (partial: Partial<DemoRunState>) => void;
   fetchState: () => Promise<void>;
 }
 
 export const useRugnotStore = create<RugnotStore>((set) => ({
   state: initialState,
   events: [],
+  demoRun: {
+    status: 'idle',
+    activeRunId: '',
+    endsAt: 0,
+    error: '',
+  },
   isLoading: false,
   error: null,
   addEvent: (event) => set((current) => ({
@@ -64,6 +81,12 @@ export const useRugnotStore = create<RugnotStore>((set) => ({
         ...current.state.config,
         ...(partial.config ?? {}),
       },
+    },
+  })),
+  setDemoRun: (partial) => set((current) => ({
+    demoRun: {
+      ...current.demoRun,
+      ...partial,
     },
   })),
   fetchState: async () => {

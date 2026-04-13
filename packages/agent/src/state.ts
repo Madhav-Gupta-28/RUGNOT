@@ -60,6 +60,10 @@ export class StateStore {
 
     try {
       const raw = fs.readFileSync(this.persistPath, 'utf-8');
+      if (!raw.trim()) {
+        console.warn(`[StateStore] Persisted state file is empty; starting with a fresh in-memory state.`);
+        return null;
+      }
       const parsed = JSON.parse(raw) as Partial<AgentState>;
       return {
         ...parsed,

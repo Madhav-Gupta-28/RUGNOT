@@ -69,7 +69,7 @@ async function fetchSmartMoneyNet(tokenAddress: string): Promise<number> {
 
 async function fetchPositionPrice(position: Position): Promise<number | null> {
   const decimals = await getTokenDecimals(position.tokenAddress);
-  const amount = position.amount > 0 ? position.amount : 1;
+  const amount = position.amount > 1e-9 ? position.amount : 1;
   const quote = await getAggregatorQuote({
     fromTokenAddress: position.tokenAddress,
     toTokenAddress: XLAYER_TOKENS.USDT,
