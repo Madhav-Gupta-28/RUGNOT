@@ -96,8 +96,8 @@ function hasLiveCredentials(): boolean {
 }
 
 // Simple token-bucket rate limiter so we don't burst past OKX's REST limits.
-// OKX caps DEX endpoints aggressively per API key / IP. The judge demo makes
-// many signed market + aggregator calls in a short burst, so we keep this
+// OKX caps DEX endpoints aggressively per API key / IP. The live proof cycle
+// makes many signed market + aggregator calls in a short burst, so we keep this
 // intentionally conservative and let retry/backoff absorb temporary 429s.
 const RATE_LIMIT_CAPACITY = 2;
 const RATE_LIMIT_REFILL_PER_SEC = 1;
@@ -240,7 +240,8 @@ export async function callOkxRest<T>(
       }
     } catch (error) {
       if (logErrors) {
-        console.error(`[OKX REST] Network error for ${requestPath}${queryString}:`, error);
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[OKX REST] Network error for ${requestPath}${queryString}: ${message}`);
       }
     }
 

@@ -93,7 +93,7 @@ export function PortfolioPage() {
         )}
       </div>
 
-      {/* Trade ledger — always visible, proves execution to judges */}
+      {/* Trade ledger — always visible, proves execution with OKLink hashes. */}
       {recentTrades.length > 0 && (
         <div className="terminal-panel rounded-md">
           <div className="border-b border-[#1a1a1a] p-4 sm:p-6 flex items-center justify-between">

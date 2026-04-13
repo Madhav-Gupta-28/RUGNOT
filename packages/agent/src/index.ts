@@ -173,7 +173,7 @@ async function runStartupValidation(): Promise<void> {
   }
 
   if (env.mainnetDemoEnabled) {
-    console.log('[RUGNOT] Mainnet judge demo enabled. Autonomous Scout buys are paused so the dashboard demo controls all execution.');
+    console.log('[RUGNOT] Live proof mode enabled. Autonomous Scout buys are paused so the dashboard controls bounded execution.');
     discoveryEnabled = false;
     return;
   }

@@ -42,8 +42,8 @@ const initialState: AgentState = {
     publicMainnetDemo: false,
     mainnetDemoAmountUsdt: 1,
     mainnetDemoTokenSymbol: 'XDOG/FDOG',
-    mainnetDemoBuyCount: 2,
-    mainnetDemoMonitorMs: 120_000,
+    mainnetDemoBuyCount: 3,
+    mainnetDemoMonitorMs: 55_000,
   },
 };
 

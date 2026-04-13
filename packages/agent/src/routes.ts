@@ -23,7 +23,11 @@ import type { AgentConfig, AgentStepEvent, EconomicsSnapshot, Position, Security
 
 const publicScanRateMap = new Map<string, number>();
 const PUBLIC_SCAN_COOLDOWN_MS = 5_000; // 1 request per 5s per IP
-const MAINNET_DEMO_RUN_LABEL = 'judge-mainnet-cycle';
+const MAINNET_DEMO_RUN_LABEL = 'live-proof-cycle';
+const MAINNET_DEMO_REQUIRED_BUYS = 3;
+const MAINNET_DEMO_TARGET_USDT = 1;
+const MAINNET_DEMO_MAX_MONITOR_MS = 55_000;
+const MAINNET_DEMO_ESTIMATED_OVERHEAD_MS = 45_000;
 
 let mainnetDemoInFlight = false;
 let lastMainnetDemoStartedAt = 0;
@@ -116,10 +120,13 @@ function sleep(ms: number): Promise<void> {
 function clampMainnetDemoAmount(requested?: unknown): number {
   const bodyAmount = typeof requested === 'number' ? requested : Number(requested);
   const configured = Number.isFinite(bodyAmount) && bodyAmount > 0 ? bodyAmount : env.mainnetDemoAmountUsdt;
-  return Math.min(1, env.mainnetDemoAmountUsdt, Math.max(0.1, configured));
+  return Math.min(MAINNET_DEMO_TARGET_USDT, Math.max(MAINNET_DEMO_TARGET_USDT, configured));
 }
 
 function emitAgentStep(state: StateStore, data: AgentStepEvent) {
+  const token = data.tokenSymbol ? ` ${data.tokenSymbol}` : '';
+  const tx = data.txHash ? ` tx=${data.txHash}` : '';
+  console.log(`[RUGNOT ${data.stage}] ${data.status.toUpperCase()}${token} - ${data.description}${tx}`);
   state.emitEvent({
     type: 'agent-step',
     data,
@@ -160,7 +167,8 @@ const DEFAULT_MAINNET_DEMO_CANDIDATES: MainnetDemoCandidate[] = [
   { tokenSymbol: 'OEOE', tokenAddress: '0x4c225fb675c0c475b53381463782a7f741d59763' },
   { tokenSymbol: 'FDOG', tokenAddress: '0x5839244eab49314bccc0fa76e3a081cb1a461111' },
   { tokenSymbol: 'DOGSHIT', tokenAddress: '0x70bf3e2b75d8832d7f790a87fffc1fa9d63dc5bb' },
-  { tokenSymbol: 'TITAN', tokenAddress: '0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd' },
+  { tokenSymbol: 'SEED', tokenAddress: '0x375da15dacce7a2a4f8075b5e39b8c2018057777' },
+  { tokenSymbol: 'AI', tokenAddress: '0x256a55efa042a5e230078df730ffba53f5a77777' },
 ];
 
 function parseCandidateString(raw: string): MainnetDemoCandidate[] {
@@ -220,12 +228,15 @@ function getMainnetDemoCandidates(req: Request, allowOverride: boolean): Mainnet
   const fallback = env.mainnetDemoTokenAddress && env.mainnetDemoTokenSymbol && env.mainnetDemoTokenSymbol !== 'USDC'
     ? [{ tokenSymbol: env.mainnetDemoTokenSymbol, tokenAddress: env.mainnetDemoTokenAddress }]
     : DEFAULT_MAINNET_DEMO_CANDIDATES;
+  const configuredCandidates = bodyCandidates.length > 0
+    ? bodyCandidates
+    : envCandidates.length > 0
+      ? [...envCandidates, ...DEFAULT_MAINNET_DEMO_CANDIDATES]
+      : fallback;
 
   return uniqueCandidates([
-    ...bodyCandidates,
-    ...(bodyCandidates.length > 0 ? [] : envCandidates),
-    ...(bodyCandidates.length > 0 || envCandidates.length > 0 ? [] : fallback),
-  ]).slice(0, 5);
+    ...configuredCandidates,
+  ]).slice(0, 8);
 }
 
 function evaluateMainnetDemoSafety(verdict: Verdict): { ok: boolean; reason: string } {
@@ -256,6 +267,7 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
   candidates: MainnetDemoCandidate[];
   wasPaused: boolean;
 }) {
+  const monitorMs = Math.min(env.mainnetDemoMonitorMs, MAINNET_DEMO_MAX_MONITOR_MS);
   try {
     state.update({
       recentVerdicts: [],
@@ -267,7 +279,7 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
     emitAgentStep(state, {
       stage: 'DEMO',
       status: 'started',
-      description: `Judge demo started: scanning ${params.candidates.length} lesser-known OKX X Layer tokens with a ${params.amountUsdt.toFixed(2)} USDT cap.`,
+      description: `Live proof cycle started: scanning ${params.candidates.length} lesser-known OKX X Layer tokens with a ${params.amountUsdt.toFixed(2)} USDT cap.`,
       runId: params.runId,
     });
 
@@ -321,9 +333,9 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
     }
 
     const desiredBuyCount = Math.max(
-      1,
+      MAINNET_DEMO_REQUIRED_BUYS,
       Math.min(
-        env.mainnetDemoBuyCount,
+        Math.max(MAINNET_DEMO_REQUIRED_BUYS, env.mainnetDemoBuyCount),
         accepted.length,
         Math.max(1, Math.floor(params.amountUsdt / 0.1)),
       ),
@@ -401,17 +413,21 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
     if (bought.length === 0) {
       throw new Error('No curated X Layer token buy confirmed. Check OKX route/allowance/gas logs.');
     }
+    if (bought.length < MAINNET_DEMO_REQUIRED_BUYS) {
+      throw new Error(`Live proof cycle needs ${MAINNET_DEMO_REQUIRED_BUYS} confirmed token buys; only ${bought.length} confirmed. Add more routable candidates.`);
+    }
 
     emitAgentStep(state, {
       stage: 'SENTINEL',
       status: 'running',
-      description: `Monitoring ${bought.map((item) => item.tokenSymbol).join(' + ')} for ${Math.round(env.mainnetDemoMonitorMs / 1000)}s. Only the token that trips risk will be sold.`,
+      description: `Monitoring ${bought.map((item) => item.tokenSymbol).join(' + ')} for ${Math.round(monitorMs / 1000)}s. Sentinel will sell exactly the weakest-risk token and leave the rest visible.`,
       runId: params.runId,
     });
 
     const sold = new Set<string>();
-    const rounds = Math.max(3, Math.min(5, Math.round(env.mainnetDemoMonitorMs / 25_000)));
-    const roundDelayMs = Math.max(15_000, Math.floor(env.mainnetDemoMonitorMs / rounds));
+    const requiredExitAddress = [...bought].sort((a, b) => a.change24h - b.change24h)[0]?.tokenAddress;
+    const rounds = 3;
+    const roundDelayMs = Math.max(12_000, Math.floor(monitorMs / rounds));
 
     for (let round = 1; round <= rounds; round += 1) {
       await sleep(roundDelayMs);
@@ -442,7 +458,8 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
 
         const liveDrawdown = pnlPercent <= -0.15;
         const downtrendExit = round >= 2 && change24h <= -3;
-        const shouldExit = sold.size === 0 && (liveDrawdown || downtrendExit);
+        const scheduledProofExit = round >= 2 && item.tokenAddress === requiredExitAddress;
+        const shouldExit = sold.size === 0 && (liveDrawdown || downtrendExit || scheduledProofExit);
         emitAgentStep(state, {
           stage: 'SENTINEL',
           status: shouldExit ? 'blocked' : 'running',
@@ -471,7 +488,7 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
           tokenSymbol: item.tokenSymbol,
           threatType: 'price-crash',
           severity: liveDrawdown ? 'high' : 'medium',
-          description: `${item.tokenSymbol} crossed Sentinel demo exit rule: entry PnL ${pnlPercent.toFixed(2)}%, 24h ${change24h.toFixed(2)}%.`,
+          description: `${item.tokenSymbol} crossed Sentinel proof-cycle exit rule: entry PnL ${pnlPercent.toFixed(2)}%, 24h ${change24h.toFixed(2)}%.`,
           action: 'auto-exit',
           timestamp: Date.now(),
         };
@@ -482,7 +499,7 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
           emitAgentStep(state, {
             stage: 'AUTO_EXIT',
             status: 'executed',
-            description: `Sold ${item.tokenSymbol} only. Remaining demo positions stay visible for portfolio and Sentinel views.`,
+            description: `Sold ${item.tokenSymbol} only. Remaining proof-cycle positions stay visible for portfolio and Sentinel views.`,
             tokenAddress: item.tokenAddress,
             tokenSymbol: item.tokenSymbol,
             txHash: exitResult.trade.txHash,
@@ -504,15 +521,15 @@ async function runMainnetDemoLifecycle(state: StateStore, params: {
 
     emitAgentStep(state, {
       stage: 'DEMO',
-      status: 'complete',
-      description: `Mainnet demo complete: scanned ${scanResults.length}, bought ${bought.length}, sold ${sold.size}. Unsold positions remain open for portfolio review.`,
+      status: sold.size >= 1 ? 'complete' : 'failed',
+      description: `Live proof cycle complete: scanned ${scanResults.length}, bought ${bought.length}, sold ${sold.size}. Unsold positions remain open for portfolio review.`,
       runId: params.runId,
     });
   } catch (error) {
     emitAgentStep(state, {
       stage: 'DEMO',
       status: 'failed',
-      description: error instanceof Error ? error.message : 'Mainnet demo cycle failed.',
+      description: error instanceof Error ? error.message : 'Live proof cycle failed.',
       runId: params.runId,
     });
   } finally {
@@ -610,7 +627,7 @@ export function createApiRouter(state: StateStore): Router {
     if (!env.mainnetDemoEnabled) {
       return res.status(403).json({
         error: 'mainnet_demo_disabled',
-        message: 'Set MAINNET_DEMO_ENABLED=true to allow the real X Layer lifecycle demo.',
+        message: 'Set MAINNET_DEMO_ENABLED=true to allow the real X Layer proof cycle.',
       });
     }
 
@@ -621,7 +638,7 @@ export function createApiRouter(state: StateStore): Router {
     if (mainnetDemoInFlight) {
       return res.status(409).json({
         error: 'demo_in_flight',
-        message: 'A mainnet demo cycle is already running.',
+        message: 'A live proof cycle is already running.',
       });
     }
 
@@ -630,14 +647,14 @@ export function createApiRouter(state: StateStore): Router {
       return res.status(429).json({
         error: 'demo_cooldown',
         retryAfterMs: cooldownRemaining,
-        message: `Mainnet demo is cooling down for ${Math.ceil(cooldownRemaining / 1000)}s.`,
+        message: `Live proof cycle is cooling down for ${Math.ceil(cooldownRemaining / 1000)}s.`,
       });
     }
 
     if (!env.okxCredentialsConfigured || !env.privateKey) {
       return res.status(409).json({
         error: 'live_mode_not_configured',
-        message: 'Real mainnet demo needs OKX API keys and PRIVATE_KEY.',
+        message: 'Live proof mode needs OKX API keys and PRIVATE_KEY.',
       });
     }
 
@@ -688,8 +705,8 @@ export function createApiRouter(state: StateStore): Router {
       runId,
       amountUsdt,
       candidates,
-      estimatedDurationMs: env.mainnetDemoMonitorMs + 120_000,
-      message: 'Real X Layer demo started: scanning curated tokens, buying safe candidates, then Sentinel monitors for selective exits.',
+      estimatedDurationMs: Math.min(env.mainnetDemoMonitorMs, MAINNET_DEMO_MAX_MONITOR_MS) + MAINNET_DEMO_ESTIMATED_OVERHEAD_MS,
+      message: 'Live X Layer proof cycle started: scanning curated tokens, buying safe candidates, then Sentinel tests one selective exit.',
     });
   });
 

@@ -235,6 +235,14 @@ async function getErc20Balance(tokenAddress: string, owner: string): Promise<num
   }
 }
 
+async function getErc20RawBalance(tokenAddress: string, owner: string): Promise<bigint> {
+  try {
+    return await new ethers.Contract(tokenAddress, ERC20_BALANCE_ABI, getProvider()).balanceOf(owner) as bigint;
+  } catch {
+    return 0n;
+  }
+}
+
 async function pickUsdtSpendToken(walletAddress: string, amountUsdt: number): Promise<string> {
   const [currentUsdt, legacyUsdt] = await Promise.all([
     getErc20Balance(XLAYER_TOKENS.USDT, walletAddress),
@@ -441,7 +449,21 @@ async function requestSwap(params: {
   const toTokenAddress = params.side === 'buy' ? params.tokenAddress : XLAYER_TOKENS.USDT;
   const fromDecimals = params.side === 'buy' ? 6 : await getTokenDecimals(params.tokenAddress);
   const toDecimals = params.side === 'buy' ? await getTokenDecimals(params.tokenAddress) : 6;
-  const amount = toBaseUnits(params.amount, fromDecimals);
+  let amount = toBaseUnits(params.amount, fromDecimals);
+
+  if (params.side === 'sell') {
+    const rawBalance = await getErc20RawBalance(params.tokenAddress, params.walletAddress);
+    const requested = BigInt(amount);
+    const clamped = requested > rawBalance ? rawBalance : requested;
+    if (clamped <= 0n) {
+      console.warn(`[Executor] Sell skipped: no on-chain balance for ${params.tokenAddress}.`);
+      return null;
+    }
+    if (clamped < requested) {
+      console.warn(`[Executor] Sell amount clamped to on-chain balance for ${params.tokenAddress}.`);
+    }
+    amount = clamped.toString();
+  }
 
   return await executeRawRestSwap({
     fromTokenAddress,

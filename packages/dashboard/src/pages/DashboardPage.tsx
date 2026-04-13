@@ -60,6 +60,8 @@ export function DashboardPage() {
   const dangerVerdicts = state.recentVerdicts.filter((verdict) => verdict.level === 'DANGER').length;
   const [now, setNow] = useState(Date.now());
   const demoStatus: DemoStatus = demoRun.status;
+  const demoBuyCount = Math.max(3, state.config.mainnetDemoBuyCount);
+  const demoMonitorSeconds = Math.round(Math.min(state.config.mainnetDemoMonitorMs, 55_000) / 1000);
   const demoCountdown = demoStatus === 'running'
     ? Math.max(0, Math.ceil((demoRun.endsAt - now) / 1000))
     : 0;
@@ -184,10 +186,10 @@ export function DashboardPage() {
               {demoStatus === 'running' && (
                 <span className="h-1.5 w-1.5 rounded-full bg-accent-safe animate-pulse-safe" />
               )}
-              {demoStatus === 'idle' && (state.config.mainnetDemoEnabled ? '▶ RUN REAL MAINNET DEMO' : 'MAINNET DEMO DISABLED')}
-              {demoStatus === 'running' && `REAL TX CYCLE... ${demoCountdown}s`}
-              {demoStatus === 'done' && '✓ MAINNET CYCLE COMPLETE — CHECK OKLINK'}
-              {demoStatus === 'error' && '✗ DEMO FAILED'}
+              {demoStatus === 'idle' && (state.config.mainnetDemoEnabled ? '▶ RUN LIVE MAINNET PROOF' : 'LIVE PROOF DISABLED')}
+              {demoStatus === 'running' && `LIVE TX CYCLE... ${demoCountdown}s`}
+              {demoStatus === 'done' && '✓ LIVE CYCLE COMPLETE — CHECK OKLINK'}
+              {demoStatus === 'error' && '✗ PROOF CYCLE FAILED'}
             </button>
             <button
               onClick={() => void triggerMockDemo()}
@@ -204,7 +206,7 @@ export function DashboardPage() {
             </Link>
           </div>
           <div className="mt-4 max-w-2xl font-mono text-[10px] leading-relaxed text-secondary">
-            Real demo: scan 5 OKX X Layer tokens, buy up to {state.config.mainnetDemoBuyCount} with a {state.config.mainnetDemoAmountUsdt.toFixed(2)} USDT cap, monitor for {Math.round(state.config.mainnetDemoMonitorMs / 1000)}s, and sell only the token that trips Sentinel.
+            Live proof: scan curated OKX X Layer tokens, buy at least {demoBuyCount} with a 1.00 USDT cap, monitor for {demoMonitorSeconds}s, and execute one selective Sentinel exit.
             {demoRun.error ? <span className="ml-2 text-accent-danger">{demoRun.error}</span> : null}
           </div>
         </div>

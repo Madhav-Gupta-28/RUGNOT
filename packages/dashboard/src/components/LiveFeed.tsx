@@ -131,7 +131,7 @@ export function LiveFeed() {
                 txUrl = `https://www.oklink.com/x-layer/tx/${hash}`;
               }
             }
-            // Agent-step events can also carry execution hashes for judge demos.
+            // Agent-step events can also carry execution hashes for live proof cycles.
             if (event.type === 'agent-step' && typeof event.data === 'object' && event.data !== null && 'txHash' in event.data) {
               const hash = (event.data as Partial<AgentStepEvent>).txHash;
               if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
