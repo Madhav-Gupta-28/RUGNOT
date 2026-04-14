@@ -57,17 +57,17 @@ export function ChatPage() {
     <div className="flex h-full min-h-[calc(100vh-7rem)] flex-col">
       <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-[#1a1a1a] pb-6 mt-4 shrink-0">
         <div>
-           <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">AGENT INTERFACE</div>
-           <h1 className="font-sans text-3xl font-bold text-primary tracking-tight">Copilot Terminal</h1>
+          <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2">AGENT INTERFACE</div>
+          <h1 className="font-sans text-3xl font-bold text-primary tracking-tight">Copilot Terminal</h1>
         </div>
         <div className="flex gap-8 sm:gap-12 text-left md:text-right">
-           <div>
-             <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2 flex items-center gap-2 justify-start md:justify-end">
-               <span className="w-1.5 h-1.5 rounded-full bg-accent-safe animate-pulse-safe" />
-               INTELLIGENCE
-             </div>
-             <div className="font-mono text-2xl text-primary tracking-widest text-[16px]">CLAUDE 3.5</div>
-           </div>
+          <div>
+            <div className="font-mono text-[10px] tracking-widest uppercase text-secondary mb-2 flex items-center gap-2 justify-start md:justify-end">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent-safe animate-pulse-safe" />
+              INTELLIGENCE
+            </div>
+            <div className="font-mono text-2xl text-primary tracking-widest text-[16px]">GEMINI 2.5</div>
+          </div>
         </div>
       </div>
 
