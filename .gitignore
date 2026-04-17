@@ -6,3 +6,4 @@ dist
 .rugnot-state.json
 data/
 .DS_Store
+.vercel
